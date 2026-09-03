@@ -38,6 +38,8 @@ class ReviewState(TypedDict):
     # assignment would keep only whichever branch finished last.
     problems: Annotated[list[Problem], operator.add]
     accepted: NotRequired[list[Finding]]
+    delta: NotRequired[object]
+    remember: NotRequired[bool]
 
 
 class SpecialistTask(TypedDict):

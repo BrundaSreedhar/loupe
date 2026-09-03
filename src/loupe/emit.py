@@ -36,6 +36,23 @@ def render_problems(result: ReviewResult, console: Console) -> None:
         console.print(Padding(line, (0, 0, 0, 4)))
 
 
+def render_delta(result: ReviewResult, console: Console) -> None:
+    """What changed since the last review of this branch.
+
+    A reviewer that reprints the same list after every push gets muted, so
+    anything already reported and still open is one line, not a panel."""
+    delta = result.delta
+    if delta is None or getattr(delta, "first_run", True):
+        return
+    bits = []
+    if delta.resolved:
+        bits.append(f"[green]{len(delta.resolved)} fixed since last review[/green]")
+    if delta.persisting:
+        bits.append(f"[dim]{len(delta.persisting)} still open from before[/dim]")
+    if bits:
+        console.print("  " + "   ·   ".join(bits))
+
+
 def render(result: ReviewResult, request: ReviewRequest, console: Console | None = None) -> None:
     console = console or Console()
 
@@ -51,6 +68,7 @@ def render(result: ReviewResult, request: ReviewRequest, console: Console | None
                 f"[dim]{result.usage.get('raw_count', 0):.0f} raw → "
                 f"{result.usage.get('merged_count', 0):.0f} merged → 0 confirmed[/dim]"
             )
+        render_delta(result, console)
         render_problems(result, console)
         console.print()
         return
@@ -86,6 +104,7 @@ def render(result: ReviewResult, request: ReviewRequest, console: Console | None
             console.print(Panel(body, title=head, title_align="left", border_style="dim"))
         console.print()
 
+    render_delta(result, console)
     u = result.usage
     console.print(
         f"  [dim]{u.get('raw_count', 0):.0f} raw → {u.get('merged_count', 0):.0f} merged → "

@@ -24,6 +24,7 @@ def run_review(
     mode: Literal["single", "multi"] = "multi",
     verify: bool = True,
     run_name: str | None = None,
+    remember: bool = True,
 ) -> ReviewResult:
     reset_usage()
     final = _graph().invoke(
@@ -31,6 +32,7 @@ def run_review(
             "request": request,
             "mode": mode,
             "verify": verify,
+            "remember": remember,
             "findings": [],
             "verdicts": [],
             "consensus": [],
@@ -42,6 +44,7 @@ def run_review(
             "metadata": {
                 "mode": mode,
                 "verify": verify,
+            "remember": remember,
                 "source": request.source,
                 "ref": request.ref,
                 "files": len(request.reviewable),
@@ -56,6 +59,7 @@ def run_review(
     merged: list[Finding] = final.get("merged") or []
     verdicts: list[Verdict] = final.get("verdicts") or []
     accepted: list[Finding] = final.get("accepted") or []
+    delta = final.get("delta")
     problems: list[Problem] = list(final.get("problems") or [])
     fell_back = usage()
     if fell_back:
@@ -78,6 +82,7 @@ def run_review(
         accepted=accepted,
         verdicts=verdicts,
         problems=problems,
+        delta=delta,
         usage={
             "raw_count": len(raw),
             "merged_count": len(merged),

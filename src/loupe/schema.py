@@ -78,6 +78,13 @@ class ReviewRequest(BaseModel):
         ]
 
     @property
+    def identity(self) -> tuple[str, str]:
+        """(repo, branch) — the key review memory is stored under."""
+        if self.source == "github" and self.repo:
+            return self.repo, f"pr-{self.pr_number}"
+        return self.repo_root, self.ref
+
+    @property
     def skipped(self) -> list[str]:
         """Paths present in the diff that no reviewer will see. Reported rather
         than silently dropped."""
@@ -150,6 +157,9 @@ class Finding(RawFinding):
     id: str
     produced_by: Role
     merged_from: list[str] = Field(default_factory=list)
+    # Stable across runs, unlike `id`. Empty when the source was unavailable to
+    # compute one — such a finding is always treated as new.
+    fingerprint: str = ""
 
 
 class Verdict(BaseModel):
@@ -210,6 +220,7 @@ class ReviewResult(BaseModel):
     accepted: list[Finding] = Field(default_factory=list)
     verdicts: list[Verdict] = Field(default_factory=list)
     problems: list[Problem] = Field(default_factory=list)
+    delta: object | None = None
     usage: dict[str, float] = Field(default_factory=dict)
 
 

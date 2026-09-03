@@ -31,6 +31,10 @@ def _preflight() -> None:
 
 Mode = typer.Option("multi", help="'multi' runs the four-specialist panel; 'single' the baseline.")
 NoVerify = typer.Option(False, "--no-verify", help="Skip the checking pass. For measurement.")
+Fresh = typer.Option(
+    False, "--fresh",
+    help="Ignore what was reported before and show everything again.",
+)
 Verbose = typer.Option(
     0, "--verbose", "-v", count=True,
     help="-v shows what each stage did; -vv adds debug; -vvv adds HTTP traffic.",
@@ -68,6 +72,7 @@ def local(
     repo_root: str = typer.Option(".", "--repo-root"),
     mode: str = Mode,
     no_verify: bool = NoVerify,
+    fresh: bool = Fresh,
     verbose: int = Verbose,
 ) -> None:
     """Review a local diff."""
@@ -91,10 +96,10 @@ def local(
         f"{PROVIDER}/{MODEL}[/dim]"
     )
     if verbose:
-        result = run_review(request, mode=mode, verify=not no_verify)
+        result = run_review(request, mode=mode, verify=not no_verify, remember=not fresh)
     else:
         with console.status("Reviewing…"):
-            result = run_review(request, mode=mode, verify=not no_verify)
+            result = run_review(request, mode=mode, verify=not no_verify, remember=not fresh)
     render(result, request, console)
 
 

@@ -8,6 +8,7 @@ from uuid import uuid4
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..config import specialist_llm, structured
+from ..fingerprint import compute as fingerprint
 from ..lint import as_prompt_section
 from ..project import load_rules
 from ..prompts.specialists import SHARED_SYSTEM, context_message, role_message
@@ -51,7 +52,14 @@ def specialist(task: SpecialistTask) -> dict:
     sources = {
         f.path: f.content_after for f in task["request"].files if f.content_after is not None
     }
-    findings = [validate_fix(f, sources.get(f.file, "")) for f in findings]
+    findings = [
+        validate_fix(f, sources.get(f.file, "")).model_copy(update={
+            "fingerprint": fingerprint(
+                f.file, f.category, sources.get(f.file, ""), f.line
+            ) if sources.get(f.file) else ""
+        })
+        for f in findings
+    ]
     kept, dropped = drop_ungrounded(findings, contexts)
     log.info("%s reviewer: %d finding(s)%s", role, len(kept),
              f", {len(dropped)} dropped as ungrounded" if dropped else "")

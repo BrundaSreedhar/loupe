@@ -91,6 +91,22 @@ reviewer could write one exactly — which becomes a one-click suggestion on a p
 request. Docs, lockfiles, generated and vendored files are skipped, and the run
 says what it skipped.
 
+## Memory
+
+A second review of the same branch reports what changed, not the same list again:
+
+```
+  1 fixed since last review   ·   3 still open from before
+```
+
+Findings are identified by a hash of the normalised code around them rather than
+by line number, so an edit twenty lines above a defect does not make it a new
+finding, and reformatting does not turn one open finding into a resolved one plus
+a new one. Fixing the defect does change the identity, which is the point.
+
+State lives in `~/.config/loupe/state`, never in the repository — a generated file
+in the working tree would end up in the next diff. `--fresh` ignores it.
+
 ## Per-project settings
 
 ```bash

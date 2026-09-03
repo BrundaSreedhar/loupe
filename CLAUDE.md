@@ -90,6 +90,14 @@ skipped when there was nothing to check. Every zero it prints must be provably
 "we looked and found nothing" rather than "we never looked". `Report.reviewed`
 exists for this; keep it honest.
 
+## Memory
+
+Findings carry both an `id` (uuid, per run, used to match a verdict to its claim)
+and a `fingerprint` (stable across runs, used to recognise a repeat). Do not
+conflate them. The fingerprint hashes normalised source around the flagged line,
+never the line number — lines move on every push, and a line-keyed identity makes
+every finding look new after a rebase.
+
 ## Things that will bite
 
 **One filter, not two.** `filters.is_reviewable_path` decides what gets reviewed,
