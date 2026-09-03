@@ -75,7 +75,9 @@ def context_message(request: ReviewRequest, contexts: dict[str, FileContext]) ->
     return "\n".join(header) + "\n" + "\n\n".join(blocks)
 
 
-def role_message(role: str, project_rules: str | None = None) -> str:
+def role_message(
+    role: str, project_rules: str | None = None, lint_section: str = ""
+) -> str:
     """Role-specific, and deliberately last so it sits outside the cached prefix."""
     rubric = RUBRICS[role]
     panel = (
@@ -101,4 +103,4 @@ WHAT YOU LOOK FOR
 WHAT YOU MUST NOT REPORT
 {rubric["non_goals"]}
 
-{rules}Review the change above and report your findings."""
+{rules}{lint_section}Review the change above and report your findings."""

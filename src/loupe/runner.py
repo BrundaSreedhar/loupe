@@ -33,6 +33,7 @@ def run_review(
             "verify": verify,
             "findings": [],
             "verdicts": [],
+            "consensus": [],
             "problems": [],
         },
         config={
@@ -88,5 +89,6 @@ def run_review(
             # review never happened, which must not be reported as "found nothing".
             "contexts": len(final.get("contexts") or {}),
             "fallback_stages": len(fell_back),
+            "reconsidered": len(final.get("consensus") or []),
         },
     )

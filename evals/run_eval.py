@@ -40,6 +40,8 @@ ARMS: dict[str, tuple[str, bool]] = {
 # Rough model calls per review, per arm: warm + reviewers + merges + verifications.
 # Deliberately on the high side — the point is to catch a run that will blow a
 # daily quota before it starts, not to predict spend to the call.
+# Consensus and the lint pre-pass are configured by environment, not by arm, so
+# these are the baseline costs with both off.
 CALLS_PER_REVIEW: dict[str, int] = {
     "multi+verify": 11,
     "multi": 6,

@@ -12,9 +12,12 @@ from collections import defaultdict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import RetryPolicy, Send
 
-from .config import SPECIALIST_ROLES, VERIFY_MODE
+from .config import CONSENSUS_SAMPLES, SPECIALIST_ROLES, VERIFY_MODE
+from .consensus import is_borderline
+from .nodes.consensus import reconsider
 from .nodes.dedupe import dedupe
 from .nodes.finalize import finalize
+from .nodes.lint import lint
 from .nodes.prepare import prepare, warm_cache
 from .nodes.safety import preflight
 from .nodes.specialists import specialist
@@ -39,7 +42,12 @@ def fan_out(state: ReviewState):
     return [
         Send(
             "specialist",
-            {"role": role, "request": state["request"], "contexts": contexts},
+            {
+                "role": role,
+                "request": state["request"],
+                "contexts": contexts,
+                "lint_issues": state.get("lint_issues") or [],
+            },
         )
         for role in roles
     ]
@@ -79,24 +87,57 @@ def route_verify(state: ReviewState):
     ]
 
 
+def route_consensus(state: ReviewState):
+    """Send only the close calls for a second opinion.
+
+    Sampling everything would be 2N extra calls to mostly re-confirm what the
+    first pass already said clearly. A finding is worth re-judging when the
+    reviewer's confidence and the gate's verdict point in opposite directions.
+    """
+    if CONSENSUS_SAMPLES <= 1:
+        return "finalize"
+
+    merged = {f.id: f for f in (state.get("merged") or [])}
+    sources = {
+        f.path: f.content_after
+        for f in state["request"].files
+        if f.content_after is not None
+    }
+
+    tasks = [
+        Send("reconsider", {
+            "finding": merged[v.finding_id],
+            "first": v,
+            "source": sources.get(merged[v.finding_id].file, ""),
+        })
+        for v in (state.get("verdicts") or [])
+        if v.finding_id in merged and is_borderline(merged[v.finding_id], v)
+    ]
+    return tasks or "finalize"
+
+
 def build_graph(checkpointer=None):
     g = StateGraph(ReviewState)
 
     g.add_node("preflight", preflight)
     g.add_node("prepare", prepare)
+    g.add_node("lint", lint)
     g.add_node("warm_cache", warm_cache, retry_policy=_RETRY)
     g.add_node("specialist", specialist, retry_policy=_RETRY)
     g.add_node("dedupe", dedupe, retry_policy=_RETRY)
     g.add_node("verify", verify, retry_policy=_RETRY)
+    g.add_node("reconsider", reconsider, retry_policy=_RETRY)
     g.add_node("finalize", finalize)
 
     g.add_edge(START, "preflight")
     g.add_edge("preflight", "prepare")
-    g.add_edge("prepare", "warm_cache")
+    g.add_edge("prepare", "lint")
+    g.add_edge("lint", "warm_cache")
     g.add_conditional_edges("warm_cache", fan_out, ["specialist", "dedupe"])
     g.add_edge("specialist", "dedupe")
     g.add_conditional_edges("dedupe", route_verify, ["verify", "finalize"])
-    g.add_edge("verify", "finalize")
+    g.add_conditional_edges("verify", route_consensus, ["reconsider", "finalize"])
+    g.add_edge("reconsider", "finalize")
     g.add_edge("finalize", END)
 
     return g.compile(checkpointer=checkpointer)

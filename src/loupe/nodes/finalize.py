@@ -18,6 +18,8 @@ def finalize(state: ReviewState) -> dict:
 
     if state.get("verify"):
         verdicts = {v.finding_id: v for v in (state.get("verdicts") or [])}
+        # A re-judged finding replaces its first verdict outright.
+        verdicts.update({v.finding_id: v for v in (state.get("consensus") or [])})
         accepted: list[Finding] = []
         for f in merged:
             v = verdicts.get(f.id)

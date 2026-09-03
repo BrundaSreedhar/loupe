@@ -13,6 +13,7 @@ from typing import Annotated, Literal, NotRequired
 
 from typing_extensions import TypedDict
 
+from .lint import LintIssue
 from .safety import SafetyIssue
 from .schema import FileContext, Finding, Problem, ReviewRequest, Verdict
 
@@ -21,6 +22,7 @@ class ReviewState(TypedDict):
     request: ReviewRequest
     contexts: NotRequired[dict[str, FileContext]]
     dropped: NotRequired[list[str]]
+    lint_issues: NotRequired[list[LintIssue]]
     safety: NotRequired[list[SafetyIssue]]
 
     mode: Literal["single", "multi"]
@@ -29,6 +31,9 @@ class ReviewState(TypedDict):
     findings: Annotated[list[Finding], operator.add]
     merged: NotRequired[list[Finding]]
     verdicts: Annotated[list[Verdict], operator.add]
+    # Re-judged borderline findings. Kept in its own channel so a consensus
+    # verdict cannot be confused with the single-pass one it replaces.
+    consensus: Annotated[list[Verdict], operator.add]
     # Reduced like the others: several nodes fail concurrently, and a plain
     # assignment would keep only whichever branch finished last.
     problems: Annotated[list[Problem], operator.add]
@@ -41,6 +46,15 @@ class SpecialistTask(TypedDict):
     role: str
     request: ReviewRequest
     contexts: dict[str, FileContext]
+    lint_issues: list[LintIssue]
+
+
+class ConsensusTask(TypedDict):
+    """Send() payload for re-judging one borderline finding."""
+
+    finding: Finding
+    first: Verdict
+    source: str
 
 
 class VerifyTask(TypedDict):

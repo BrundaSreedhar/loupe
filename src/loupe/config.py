@@ -135,6 +135,21 @@ MERGE_LINE_WINDOW = int(os.getenv("LOUPE_MERGE_LINE_WINDOW", "3"))
 
 SPECIALIST_ROLES = ("security", "correctness", "performance", "maintainability")
 
+# Whether to run the repository's own linters before reviewing.
+#   auto — on for a local diff, off for a pull request. Running a repo's tooling
+#          executes its config, which is fine for your code and not fine for a
+#          branch someone else wrote.
+#   on   — always. off — never.
+LINT = os.getenv("LOUPE_LINT", "auto").lower()
+
+
+def lint_enabled(source: str) -> bool:
+    if LINT == "on":
+        return True
+    if LINT == "off":
+        return False
+    return source == "local"
+
 # What to do when a credential is found in the diff.
 #   redact — blank the value, review the rest (default: the secret never leaves,
 #            and you still get a review)
@@ -164,6 +179,18 @@ BURST = int(os.getenv("LOUPE_BURST", str(len(SPECIALIST_ROLES))))
 # Warming a prefix costs one blocking call before the fan-out can start. Below
 # this size the cache saves less than the extra round-trip costs.
 WARM_MIN_TOKENS = int(os.getenv("LOUPE_WARM_MIN_TOKENS", "4000"))
+
+# How many verification samples a *borderline* finding gets. 1 disables it.
+# Sampling everything three times costs 2N extra calls for almost no gain: a
+# verifier that confirms with clear reasoning does not change its mind on
+# resample. The close calls are where the extra look pays for itself.
+CONSENSUS_SAMPLES = int(os.getenv("LOUPE_CONSENSUS_SAMPLES", "1"))
+
+# A finding is borderline when the two independent signals disagree: the reviewer
+# was unsure and the gate confirmed anyway, or the reviewer was confident and the
+# gate rejected. Agreement in either direction needs no second opinion.
+CONSENSUS_LOW = float(os.getenv("LOUPE_CONSENSUS_LOW", "0.6"))
+CONSENSUS_HIGH = float(os.getenv("LOUPE_CONSENSUS_HIGH", "0.85"))
 
 # "per_file" verifies all of a file's findings in one call, "per_finding" uses one
 # call each. Per-file is far cheaper; per-finding keeps the judgements independent.
