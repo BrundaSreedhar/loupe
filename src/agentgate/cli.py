@@ -142,6 +142,27 @@ def pr(
 
 
 @app.command()
+def init(
+    repo_root: str = typer.Option(".", "--repo-root"),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing files."),
+) -> None:
+    """Create a .agentgate/ folder so this repo carries its own review settings."""
+    from .project import scaffold
+
+    directory, written, skipped = scaffold(repo_root, force=force)
+    rel = os.path.relpath(directory, os.getcwd())
+    for name in written:
+        console.print(f"  [green]created[/green] {rel}/{name}")
+    for name in skipped:
+        console.print(f"  [dim]kept[/dim]    {rel}/{name} [dim](--force to replace)[/dim]")
+    if written:
+        console.print(
+            f"\n[dim]Edit {rel}/rules.md with the mistakes this codebase actually "
+            "makes — that is the file worth writing.[/dim]"
+        )
+
+
+@app.command()
 def doctor() -> None:
     """Show what is configured, before spending anything finding out."""
     ok = credentials_present()

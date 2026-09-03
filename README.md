@@ -107,6 +107,11 @@ possibility of writing to anyone's repository.
 
 ## Per-project settings
 
+```bash
+cd your-project
+agentgate init        # creates .agentgate/ with commented templates
+```
+
 A repository can carry its own review configuration, the way it carries its own
 linter config:
 

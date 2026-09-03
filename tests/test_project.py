@@ -75,3 +75,42 @@ def test_rules_go_in_the_role_message_not_the_shared_prefix(project):
 
     assert "integer cents" not in SHARED_SYSTEM
     assert "integer cents" in role_message("security", load_rules(project))
+
+
+def test_init_creates_the_three_files(tmp_path):
+    from agentgate.project import scaffold
+
+    directory, written, skipped = scaffold(tmp_path)
+    assert directory == tmp_path / ".agentgate"
+    assert sorted(written) == ["config.env", "ignore", "rules.md"]
+    assert skipped == []
+
+
+def test_init_does_not_clobber_existing_files(tmp_path):
+    from agentgate.project import scaffold
+
+    scaffold(tmp_path)
+    (tmp_path / ".agentgate" / "rules.md").write_text("- my own rule\n")
+    _, written, skipped = scaffold(tmp_path)
+    assert written == [] and sorted(skipped) == ["config.env", "ignore", "rules.md"]
+    assert "my own rule" in (tmp_path / ".agentgate" / "rules.md").read_text()
+
+
+def test_force_replaces_them(tmp_path):
+    from agentgate.project import scaffold
+
+    scaffold(tmp_path)
+    (tmp_path / ".agentgate" / "rules.md").write_text("- my own rule\n")
+    _, written, _ = scaffold(tmp_path, force=True)
+    assert "rules.md" in written
+    assert "my own rule" not in (tmp_path / ".agentgate" / "rules.md").read_text()
+
+
+def test_scaffolded_files_are_actually_loadable(tmp_path):
+    """The templates must parse as what they claim to be — an ignore file of only
+    comments yields no patterns, and the rules template is real guidance."""
+    from agentgate.project import load_ignore, load_rules, scaffold
+
+    scaffold(tmp_path)
+    assert load_ignore(tmp_path) == []          # everything is commented out
+    assert "integer cents" in load_rules(tmp_path)
