@@ -81,3 +81,37 @@ def test_setup_logging_quiets_http_chatter_by_default():
     setup_logging(3)
     assert logging.getLogger("httpx").level == logging.DEBUG
     setup_logging(0)
+
+
+def test_dependency_chatter_is_dropped_but_real_warnings_survive():
+    """google_genai warns on every call about how langchain calls it. The user
+    cannot act on it and it fires constantly; a genuine SDK warning must still
+    get through, so it is filtered by message, not by silencing the logger."""
+    import io
+
+    console = Console(file=io.StringIO(), width=100, no_color=True)
+    setup_logging(1, console=console)
+    log = logging.getLogger("google_genai.models")
+
+    log.warning(
+        "Direct use of automatic function calling (AFC) in Models.generate_content "
+        "is not recommended."
+    )
+    log.warning("Your API key will expire in 3 days.")
+
+    out = console.file.getvalue()
+    assert "automatic function calling" not in out
+    assert "API key will expire" in out
+    setup_logging(0)
+
+
+def test_everything_shows_at_maximum_verbosity():
+    import io
+
+    console = Console(file=io.StringIO(), width=100, no_color=True)
+    setup_logging(3, console=console)
+    logging.getLogger("google_genai.models").warning(
+        "Direct use of automatic function calling (AFC) is not recommended."
+    )
+    assert "automatic function calling" in console.file.getvalue()
+    setup_logging(0)

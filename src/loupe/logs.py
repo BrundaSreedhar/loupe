@@ -18,6 +18,22 @@ from rich.logging import RichHandler
 
 _NOISY = ("httpx", "httpcore", "google_genai", "google.genai", "urllib3", "langsmith")
 
+# Warnings from a dependency about how *another* dependency calls it. Nothing the
+# user of this tool can act on, and they fire on every single model call. Dropped
+# by message rather than by silencing the whole logger, so a genuine SDK warning
+# still gets through.
+_UNACTIONABLE = (
+    "automatic function calling",
+    "AFC is enabled",
+    "AFC remote call",
+)
+
+
+class _DropUnactionable(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return not any(fragment in message for fragment in _UNACTIONABLE)
+
 
 def setup_logging(verbosity: int = 0, console: Console | None = None) -> None:
     """verbosity 0 = warnings only, 1 = what each stage did, 2 = everything."""
@@ -43,3 +59,7 @@ def setup_logging(verbosity: int = 0, console: Console | None = None) -> None:
     noisy_level = logging.DEBUG if verbosity >= 3 else logging.WARNING
     for name in _NOISY:
         logging.getLogger(name).setLevel(noisy_level)
+
+    # At -vvv you asked for everything, warts included.
+    if verbosity < 3:
+        handler.addFilter(_DropUnactionable())
