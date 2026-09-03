@@ -79,11 +79,16 @@ def role_message(
     role: str, project_rules: str | None = None, lint_section: str = ""
 ) -> str:
     """Role-specific, and deliberately last so it sits outside the cached prefix."""
-    rubric = RUBRICS[role]
+    if role == "combined":
+        from .rubrics import combined_rubric
+
+        rubric = combined_rubric()
+    else:
+        rubric = RUBRICS[role]
     panel = (
         "Three other reviewers are covering the other areas — stay in yours, and "
         "trust them to cover theirs.\n\n"
-        if role != "generalist"
+        if role not in ("generalist", "combined")
         else ""
     )
     rules = ""

@@ -87,3 +87,23 @@ noise across the industry. If you are not sure, report nothing.""",
 - Subjective architecture preference.""",
     },
 }
+
+
+def combined_rubric() -> dict[str, str]:
+    """Every specialist's checklist in one prompt.
+
+    One call instead of four. The reviewer sees all four sets of concerns at once,
+    which is cheaper and less thorough per area — a single pass has to divide its
+    attention where four passes each spend all of theirs.
+    """
+    from .rubrics import RUBRICS as _R
+
+    looks = "\n\n".join(
+        f"{role.upper()}\n{_R[role]['looks_for']}"
+        for role in ("security", "correctness", "performance", "maintainability")
+    )
+    return {
+        "looks_for": looks,
+        "non_goals": _R["generalist"]["non_goals"]
+        + "\n- Anything you would have to speculate about to report.",
+    }

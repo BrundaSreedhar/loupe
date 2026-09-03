@@ -3,8 +3,20 @@
 from __future__ import annotations
 
 import importlib
+import sys
 
 import pytest
+
+# Modules that bind values out of config at import time.
+_DEPENDANTS = (
+    "loupe.nodes.dedupe",
+    "loupe.nodes.prepare",
+    "loupe.nodes.specialists",
+    "loupe.nodes.verify",
+    "loupe.nodes.consensus",
+    "loupe.nodes.lint",
+    "loupe.graph",
+)
 
 
 @pytest.fixture
@@ -27,9 +39,21 @@ def isolated_config(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
 
     def reload():
-        return importlib.reload(config)
+        module = importlib.reload(config)
+        # Modules that did `from .config import X` hold their own copy of X, so
+        # reloading config alone leaves them stale. Reload the dependants too.
+        for name in _DEPENDANTS:
+            if name in sys.modules:
+                importlib.reload(sys.modules[name])
+        return module
 
     yield reload
-    # Restore the real module state for anything that runs after this test.
+
+    # Restore real module state for whatever runs next. Without this a test that
+    # reloads config leaks its environment into the rest of the suite — which is
+    # how these tests passed alone and failed together.
     monkeypatch.undo()
-    importlib.reload(config)
+    reload()
+    runner = sys.modules.get("loupe.runner")
+    if runner is not None:
+        runner._GRAPH = None  # the compiled graph caches the old node wiring

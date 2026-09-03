@@ -12,7 +12,7 @@ from collections import defaultdict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import RetryPolicy, Send
 
-from .config import CONSENSUS_SAMPLES, SPECIALIST_ROLES, VERIFY_MODE
+from .config import CONSENSUS_SAMPLES, FANOUT, SPECIALIST_ROLES, VERIFY_MODE
 from .consensus import is_borderline
 from .nodes.consensus import reconsider
 from .nodes.dedupe import dedupe
@@ -38,7 +38,13 @@ def fan_out(state: ReviewState):
     contexts = state.get("contexts") or {}
     if not contexts:
         return "dedupe"
-    roles = SPECIALIST_ROLES if state.get("mode") == "multi" else ("generalist",)
+    if state.get("mode") != "multi":
+        roles: tuple[str, ...] = ("generalist",)
+    elif FANOUT == "combined":
+        # Every rubric in one call rather than one call per rubric.
+        roles = ("combined",)
+    else:
+        roles = SPECIALIST_ROLES
     return [
         Send(
             "specialist",

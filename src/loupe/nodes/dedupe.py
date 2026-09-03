@@ -13,11 +13,12 @@ from collections import defaultdict
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..config import MERGE_LINE_WINDOW, merger_llm, structured
+from ..config import MAX_REPORTED, MERGE_LINE_WINDOW, VERIFY_HEADROOM, merger_llm, structured
 from ..prompts.merge import SYSTEM, user_prompt
 from ..quota import raise_if_terminal
 from ..schema import Finding, MergeResult, Problem
 from ..state import ReviewState
+from .finalize import rank_key
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +55,11 @@ def dedupe(state: ReviewState) -> dict:
         if len(group) == 1:
             merged.append(group[0])
             continue
+        if len({f.produced_by for f in group}) == 1:
+            # One reviewer filing twice near the same line is reporting two things,
+            # not the same thing twice — it saw both at once. Nothing to merge.
+            merged.extend(group)
+            continue
         try:
             result: MergeResult = llm.invoke(
                 [SystemMessage(SYSTEM), HumanMessage(user_prompt(group))],
@@ -88,5 +94,15 @@ def dedupe(state: ReviewState) -> dict:
                 )
             )
 
-    log.info("dedupe: %d finding(s) -> %d", len(findings), len(merged))
-    return {"merged": merged, "problems": problems}
+    # Rank and shortlist here rather than in finalize. Verification costs a call
+    # per file, and a finding that ranking will discard anyway is a call spent on
+    # an answer nobody sees. Some headroom over MAX_REPORTED, because the gate
+    # will reject a share of these and the survivors have to fill the report.
+    merged.sort(key=rank_key, reverse=True)
+    shortlist = merged[: MAX_REPORTED * VERIFY_HEADROOM]
+    if len(shortlist) < len(merged):
+        log.info("dedupe: %d finding(s) -> %d merged -> %d worth verifying",
+                 len(findings), len(merged), len(shortlist))
+    else:
+        log.info("dedupe: %d finding(s) -> %d", len(findings), len(merged))
+    return {"merged": shortlist, "problems": problems}

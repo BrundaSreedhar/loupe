@@ -130,10 +130,28 @@ REVIEW_TOKEN_BUDGET = int(os.getenv("LOUPE_REVIEW_TOKEN_BUDGET", "120000"))
 WINDOW_PADDING = int(os.getenv("LOUPE_WINDOW_PADDING", "40"))
 # Findings shown. A review with 8 findings gets read; one with 40 gets closed.
 MAX_REPORTED = int(os.getenv("LOUPE_MAX_REPORTED", "12"))
+# How many findings to verify, as a multiple of what will be reported. Verifying
+# more than this is paying to judge findings that ranking discards unseen.
+VERIFY_HEADROOM = int(os.getenv("LOUPE_VERIFY_HEADROOM", "2"))
 # Two findings this close on the same file are candidates for merging.
 MERGE_LINE_WINDOW = int(os.getenv("LOUPE_MERGE_LINE_WINDOW", "3"))
 
-SPECIALIST_ROLES = ("security", "correctness", "performance", "maintainability")
+_ALL_ROLES = ("security", "correctness", "performance", "maintainability")
+
+# Which reviewers to run. Each is one model call, so this is the largest single
+# lever on cost: dropping to two halves the fan-out. Whether the dropped two were
+# earning their calls is a question for the harness, not for taste.
+SPECIALIST_ROLES = tuple(
+    r.strip() for r in os.getenv("LOUPE_ROLES", ",".join(_ALL_ROLES)).split(",") if r.strip()
+)
+_unknown = set(SPECIALIST_ROLES) - set(_ALL_ROLES)
+if _unknown:
+    raise ValueError(f"LOUPE_ROLES has unknown role(s): {sorted(_unknown)}")
+
+# "parallel" runs one call per reviewer. "combined" runs a single call carrying
+# every rubric — four times cheaper, and it gives up the independence that makes
+# four reviewers worth having. An arm to measure, not a default to assume.
+FANOUT = os.getenv("LOUPE_FANOUT", "parallel").lower()
 
 # Whether to run the repository's own linters before reviewing.
 #   auto — on for a local diff, off for a pull request. Running a repo's tooling
