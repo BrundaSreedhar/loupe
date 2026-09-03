@@ -37,6 +37,30 @@ Verbose = typer.Option(
 )
 
 
+def _explain_nothing(request, target: str) -> None:
+    """"Nothing to review" has two causes that need different fixes: an empty
+    diff, or a diff whose files were all filtered out as non-source."""
+    if not request.files:
+        console.print(f"[yellow]No changes found in {target}.[/yellow]")
+        console.print(
+            "[dim]`review local <ref>` diffs a ref against your working tree, so "
+            "HEAD means uncommitted changes only. Try `review local HEAD~1` for "
+            "the last commit, or --staged for the index.[/dim]"
+        )
+        return
+
+    console.print(
+        f"[yellow]{len(request.files)} file(s) changed in {target}, but none are "
+        "reviewable.[/yellow]"
+    )
+    for path in request.skipped:
+        console.print(f"  [dim]skipped[/dim] {path}")
+    console.print(
+        "[dim]Docs, lockfiles, generated and vendored files are skipped — see "
+        "filters.py. Binary and deleted files are skipped too.[/dim]"
+    )
+
+
 @app.command()
 def local(
     ref: str = typer.Argument("HEAD~1", help="Ref to diff against."),
@@ -55,9 +79,13 @@ def local(
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from exc
     if not request.reviewable:
-        console.print("[yellow]Nothing to review.[/yellow]")
+        _explain_nothing(request, "staged changes" if staged else f"{ref}..working tree")
         raise typer.Exit(0)
 
+    if request.skipped:
+        console.print(f"[dim]Skipping {len(request.skipped)} non-source file(s): "
+                      f"{', '.join(request.skipped[:4])}"
+                      f"{'…' if len(request.skipped) > 4 else ''}[/dim]")
     console.print(
         f"[dim]Reviewing {len(request.reviewable)} file(s) · mode={mode} · "
         f"{PROVIDER}/{MODEL}[/dim]"
@@ -86,7 +114,7 @@ def pr(
     _preflight()
     request = github_pr.load(repo, number)
     if not request.reviewable:
-        console.print("[yellow]Nothing to review.[/yellow]")
+        _explain_nothing(request, f"{repo}#{number}")
         raise typer.Exit(0)
 
     console.print(f"[dim]Reviewing {repo}#{number} · {len(request.reviewable)} file(s)[/dim]")

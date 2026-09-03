@@ -188,3 +188,37 @@ def test_github_comment_anchors_to_the_fix_range():
                          accepted=[_finding_with_fix(start_line=2, end_line=4)])
     c = to_review_comments(multi)[0]
     assert c["start_line"] == 2 and c["line"] == 4 and c["start_side"] == "RIGHT"
+
+
+def test_nothing_to_review_distinguishes_its_two_causes():
+    """An empty diff and a diff that was entirely filtered need different fixes,
+    so the message has to say which happened."""
+    from typer.testing import CliRunner
+
+    from reviewer.cli import app
+
+    runner = CliRunner()
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        for cmd in (["git", "init", "-q", "-b", "main"],
+                    ["git", "config", "user.email", "t@t"],
+                    ["git", "config", "user.name", "t"]):
+            subprocess.run(cmd, cwd=root, check=True, capture_output=True)
+        (root / "a.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-qm", "one"], cwd=root, check=True, capture_output=True)
+
+        empty = runner.invoke(app, ["local", "HEAD", "--repo-root", str(root)])
+        assert "No changes found" in empty.output
+
+        (root / "README.md").write_text("# hi\n")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-qm", "docs"], cwd=root, check=True, capture_output=True)
+
+        filtered = runner.invoke(app, ["local", "HEAD~1", "--repo-root", str(root)])
+        assert "none are reviewable" in filtered.output
+        assert "README.md" in filtered.output
