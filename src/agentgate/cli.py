@@ -43,8 +43,8 @@ def _explain_nothing(request, target: str) -> None:
     if not request.files:
         console.print(f"[yellow]No changes found in {target}.[/yellow]")
         console.print(
-            "[dim]`review local <ref>` diffs a ref against your working tree, so "
-            "HEAD means uncommitted changes only. Try `review local HEAD~1` for "
+            "[dim]`agentgate local <ref>` diffs a ref against your working tree, so "
+            "HEAD means uncommitted changes only. Try `agentgate local HEAD~1` for "
             "the last commit, or --staged for the index.[/dim]"
         )
         return

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from reviewer.fallback import LocalFallback, reset_usage, usage
+from agentgate.fallback import LocalFallback, reset_usage, usage
 from tests.test_quota import DAILY, PER_MINUTE
 
 
@@ -76,8 +76,8 @@ def test_no_fallback_when_primary_succeeds():
 def test_fallback_is_reported_as_an_error_not_a_footnote(monkeypatch):
     """A review answered by a small local model is a different artefact. If that
     is not on the output, the numbers from it look like the real thing."""
-    import reviewer.fallback as fb
-    import reviewer.runner as runner
+    import agentgate.fallback as fb
+    import agentgate.runner as runner
 
     monkeypatch.setattr(runner, "usage", lambda: {"verify", "specialist:security"})
 
@@ -87,7 +87,7 @@ def test_fallback_is_reported_as_an_error_not_a_footnote(monkeypatch):
                     "problems": [], "contexts": {}}
 
     monkeypatch.setattr(runner, "_graph", lambda: _Graph())
-    from reviewer.schema import ReviewRequest
+    from agentgate.schema import ReviewRequest
 
     result = runner.run_review(ReviewRequest(source="local", ref="r"))
     fallback = [p for p in result.problems if p.stage == "fallback"]
@@ -127,7 +127,7 @@ def test_verifier_can_use_a_different_model_from_the_reviewers(monkeypatch, isol
 
 def test_verifier_model_defaults_to_the_main_model(monkeypatch, isolated_config):
     """Must not depend on whether the person running the tests has a verifier
-    model configured in their own ~/.config/reviewer/.env."""
+    model configured in their own ~/.config/agentgate/.env."""
     monkeypatch.setenv("REVIEWER_PROVIDER", "google")
     monkeypatch.setenv("REVIEWER_MODEL", "gemini-3.5-flash")
     monkeypatch.delenv("REVIEWER_VERIFIER_MODEL", raising=False)

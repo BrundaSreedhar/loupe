@@ -11,9 +11,9 @@ import logging
 
 from rich.console import Console
 
-from reviewer.emit import render
-from reviewer.logs import setup_logging
-from reviewer.schema import Finding, Problem, ReviewRequest, ReviewResult
+from agentgate.emit import render
+from agentgate.logs import setup_logging
+from agentgate.schema import Finding, Problem, ReviewRequest, ReviewResult
 
 
 def _result(**kw) -> ReviewResult:
@@ -66,7 +66,7 @@ def test_problems_use_a_reducer_so_concurrent_failures_are_not_lost():
     import operator
     from typing import get_args, get_type_hints
 
-    from reviewer.state import ReviewState
+    from agentgate.state import ReviewState
 
     hints = get_type_hints(ReviewState, include_extras=True)
     assert operator.add in get_args(hints["problems"])
@@ -76,7 +76,7 @@ def test_setup_logging_quiets_http_chatter_by_default():
     """At INFO, httpx logs a line per request and buries everything about the
     review itself."""
     setup_logging(1)
-    assert logging.getLogger("reviewer").level == logging.INFO
+    assert logging.getLogger("agentgate").level == logging.INFO
     assert logging.getLogger("httpx").level == logging.WARNING
     setup_logging(3)
     assert logging.getLogger("httpx").level == logging.DEBUG

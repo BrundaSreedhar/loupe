@@ -1,6 +1,6 @@
-from reviewer.context import render_numbered
-from reviewer.nodes._common import drop_ungrounded, valid_lines
-from reviewer.schema import FileContext, Finding
+from agentgate.context import render_numbered
+from agentgate.nodes._common import drop_ungrounded, valid_lines
+from agentgate.schema import FileContext, Finding
 
 SRC = "\n".join(f"line {i}" for i in range(1, 11))
 

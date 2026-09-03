@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install `review` as a command available from any directory.
+# Install `agentgate` as a command available from any directory.
 #
 # Uses `uv tool install`, which builds an isolated environment for the package and
 # links its entry point into ~/.local/bin — so the tool's dependencies never
@@ -7,7 +7,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/reviewer"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/agentgate"
 CONFIG="$CONFIG_DIR/.env"
 
 say()  { printf '  %s\n' "$1"; }
@@ -47,8 +47,8 @@ esac
 
 # ── verify ────────────────────────────────────────────────────────────────
 say ""
-if command -v review >/dev/null 2>&1; then
-  say "run 'review doctor' to check your configuration"
+if command -v agentgate >/dev/null 2>&1; then
+  say "run 'agentgate doctor' to check your configuration"
 else
-  say "installed, but 'review' is not on your PATH yet — see the note above"
+  say "installed, but 'agentgate' is not on your PATH yet — see the note above"
 fi

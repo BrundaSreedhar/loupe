@@ -13,8 +13,8 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
-from reviewer.filters import is_reviewable_path
-from reviewer.schema import FileDiff, Hunk, ReviewRequest
+from agentgate.filters import is_reviewable_path
+from agentgate.schema import FileDiff, Hunk, ReviewRequest
 
 from .mutations import Mutation, all_benign_mutators, all_defect_mutators
 

@@ -22,13 +22,13 @@ from langchain_core.rate_limiters import InMemoryRateLimiter
 # Three places, most specific first. Nothing overrides anything already set, so
 # an env var in the shell always wins.
 #
-#   0. .reviewer/config.env in the current directory or above — a project's own
+#   0. .agentgate/config.env in the current directory or above — a project's own
 #      settings, travelling with the checkout.
 #   1. cwd and above — a plain .env, same idea.
 #   2. the reviewer's own checkout — for `--repo-root ~/elsewhere`, since
 #      python-dotenv only ever walks up from the working directory. Present only
 #      for an editable install; a normal install puts __file__ in site-packages.
-#   3. ~/.config/reviewer/.env — the one that makes `review` work from anywhere
+#   3. ~/.config/agentgate/.env — the one that makes `agentgate` work from anywhere
 #      once it is installed as a command rather than run out of the checkout.
 USER_CONFIG = Path(
     os.getenv("XDG_CONFIG_HOME", Path.home() / ".config")

@@ -1,15 +1,15 @@
-"""Per-project config in a `.reviewer/` folder."""
+"""Per-project config in a `.agentgate/` folder."""
 
 from __future__ import annotations
 
 import pytest
 
-from reviewer.project import find_dir, is_ignored, load_ignore, load_rules
+from agentgate.project import find_dir, is_ignored, load_ignore, load_rules
 
 
 @pytest.fixture
 def project(tmp_path):
-    d = tmp_path / ".reviewer"
+    d = tmp_path / ".agentgate"
     d.mkdir()
     (d / "rules.md").write_text("- Money is always integer cents.\n")
     (d / "ignore").write_text("# generated\nsrc/generated/*\n*.pb.ts\n")
@@ -19,7 +19,7 @@ def project(tmp_path):
 def test_found_from_a_subdirectory(project):
     deep = project / "src" / "lib" / "deep"
     deep.mkdir(parents=True)
-    assert find_dir(deep) == project / ".reviewer"
+    assert find_dir(deep) == project / ".agentgate"
 
 
 def test_absent_when_there_is_none(tmp_path):
@@ -33,14 +33,14 @@ def test_rules_are_read(project):
 
 
 def test_empty_rules_file_is_treated_as_none(project):
-    (project / ".reviewer" / "rules.md").write_text("   \n")
+    (project / ".agentgate" / "rules.md").write_text("   \n")
     assert load_rules(project) is None
 
 
 def test_oversized_rules_are_truncated(project):
-    from reviewer.project import MAX_RULES_CHARS
+    from agentgate.project import MAX_RULES_CHARS
 
-    (project / ".reviewer" / "rules.md").write_text("x" * (MAX_RULES_CHARS + 500))
+    (project / ".agentgate" / "rules.md").write_text("x" * (MAX_RULES_CHARS + 500))
     assert len(load_rules(project)) == MAX_RULES_CHARS
 
 
@@ -61,7 +61,7 @@ def test_ignore_matching(path, expected, project):
 def test_rules_are_framed_as_configuration_not_file_content(project):
     """rules.md is written by maintainers, but it still ends up in a prompt next
     to untrusted source. It must be labelled as the former."""
-    from reviewer.prompts.specialists import role_message
+    from agentgate.prompts.specialists import role_message
 
     msg = role_message("security", load_rules(project))
     assert "integer cents" in msg
@@ -71,7 +71,7 @@ def test_rules_are_framed_as_configuration_not_file_content(project):
 def test_rules_go_in_the_role_message_not_the_shared_prefix(project):
     """Putting per-project rules in the system prompt would give every reviewer a
     different cached prefix and defeat the cache warm."""
-    from reviewer.prompts.specialists import SHARED_SYSTEM, role_message
+    from agentgate.prompts.specialists import SHARED_SYSTEM, role_message
 
     assert "integer cents" not in SHARED_SYSTEM
     assert "integer cents" in role_message("security", load_rules(project))

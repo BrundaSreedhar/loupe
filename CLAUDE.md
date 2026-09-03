@@ -22,7 +22,7 @@ trusting a blog post — `gemini-2.5-flash` is already retired and returns 404
 pointing at `gemini-3.6-flash`.
 
 ```bash
-review doctor          # provider, model, key, rate limit — check before running
+agentgate doctor          # provider, model, key, rate limit — check before running
 ```
 
 Ollama is installed locally with `qwen2:7b`, and is wired in as a third provider.
@@ -32,7 +32,7 @@ disagreeing, a broken guard — and a small local model would have caught all of
 them for free and without limit.
 
 ```bash
-REVIEWER_PROVIDER=ollama review local HEAD~1     # run entirely on the local model
+REVIEWER_PROVIDER=ollama agentgate local HEAD~1     # run entirely on the local model
 REVIEWER_FALLBACK_MODEL=qwen2:7b                 # or use it only when quota runs out
 ```
 
@@ -55,25 +55,25 @@ comment it out rather than relying on that.
 
 ## Commands
 
-`./install.sh` puts `review` on the PATH via `uv tool install --editable`, with
-settings in `~/.config/reviewer/.env`. Inside this checkout `.venv/bin/review`
+`./install.sh` puts `agentgate` on the PATH via `uv tool install --editable`, with
+settings in `~/.config/agentgate/.env`. Inside this checkout `.venv/bin/agentgate`
 works too; they are the same code because the install is editable.
 
 ```bash
-review local HEAD~1                  # review a local diff
-review local --mode single           # one reviewer instead of four (1 call)
-review local --no-verify             # skip the checking pass
-review pr owner/repo 123             # dry run; --post writes to GitHub
-review graph                         # print the compiled graph
-review local HEAD~1 -v               # show what each stage did
-review local HEAD~1 -vv              # add debug;  -vvv adds HTTP traffic
+agentgate local HEAD~1                  # review a local diff
+agentgate local --mode single           # one reviewer instead of four (1 call)
+agentgate local --no-verify             # skip the checking pass
+agentgate pr owner/repo 123             # dry run; --post writes to GitHub
+agentgate graph                         # print the compiled graph
+agentgate local HEAD~1 -v               # show what each stage did
+agentgate local HEAD~1 -vv              # add debug;  -vvv adds HTTP traffic
 python -m evals.run_eval main --source ~/repo --n-defect 6 --n-clean 6
 python -m evals.run_eval main --source ~/repo --dry-run    # corpus only, no calls
 pytest -q
 ruff check src evals tests
 ```
 
-`review local` diffs a ref against the **working tree**, so `HEAD` means
+`agentgate local` diffs a ref against the **working tree**, so `HEAD` means
 uncommitted changes and `HEAD~1` means the last commit plus anything uncommitted.
 
 ## How to work here
@@ -143,7 +143,7 @@ change that default.
 
 ## Per-project config
 
-A repo under review may carry `.reviewer/` with `config.env`, `rules.md` and
+A repo under review may carry `.agentgate/` with `config.env`, `rules.md` and
 `ignore`. Rules go in the **role message**, never the system prompt — putting
 them in the prefix would give each reviewer a different cached prefix and defeat
 the warm. They are labelled as maintainer configuration, because they sit in the
@@ -152,7 +152,7 @@ same prompt as untrusted source.
 ## Layout
 
 ```
-src/reviewer/
+src/agentgate/
   cli.py          commands
   runner.py       one entry point; the CLI and the eval both use it
   graph.py        node wiring

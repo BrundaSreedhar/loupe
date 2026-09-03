@@ -19,10 +19,10 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from reviewer.config import MODEL, PROVIDER, RPM
-from reviewer.quota import DailyQuotaExhausted
-from reviewer.runner import run_review
-from reviewer.schema import ReviewRequest
+from agentgate.config import MODEL, PROVIDER, RPM
+from agentgate.quota import DailyQuotaExhausted
+from agentgate.runner import run_review
+from agentgate.schema import ReviewRequest
 
 from .corpus import Case, build
 from .scoring import Report, score_case, spread
@@ -98,7 +98,7 @@ def check_did_work(results: dict[str, list[Report]]) -> bool:
                 console.print(
                     f"[red]{arm} run {i}: every case failed — no result was "
                     "produced at all.[/red] Common cause: the daily quota is "
-                    "exhausted. Re-run `review doctor` and check your limits."
+                    "exhausted. Re-run `agentgate doctor` and check your limits."
                 )
                 ok = False
             elif r.fell_back:

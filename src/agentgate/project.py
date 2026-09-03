@@ -1,9 +1,9 @@
-"""Per-project configuration in a `.reviewer/` folder.
+"""Per-project configuration in a `.agentgate/` folder.
 
 A repository carries its own review settings the way it carries its own linter
 config, so a checkout is self-describing and settings travel with the code:
 
-    .reviewer/
+    .agentgate/
       config.env    settings — same keys as .env
       rules.md      review guidance specific to this codebase
       ignore        extra paths to skip, one glob per line
@@ -20,12 +20,12 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-DIR_NAME = ".reviewer"
+DIR_NAME = ".agentgate"
 MAX_RULES_CHARS = 8000
 
 
 def find_dir(start: Path | str) -> Path | None:
-    """Nearest `.reviewer/` at or above `start`."""
+    """Nearest `.agentgate/` at or above `start`."""
     here = Path(start).resolve()
     for candidate in (here, *here.parents):
         found = candidate / DIR_NAME

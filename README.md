@@ -12,33 +12,33 @@ comparison. Runs on Gemini or Claude.
 ## Install
 
 ```bash
-./install.sh          # makes `review` available from any directory
-review doctor         # check configuration
+./install.sh          # makes `agentgate` available from any directory
+agentgate doctor         # check configuration
 ```
 
 That uses `uv tool install --editable`, which builds an isolated environment for
-the tool and links `review` into `~/.local/bin` — so its dependencies never
+the tool and links `agentgate` into `~/.local/bin` — so its dependencies never
 collide with whatever project you are standing in. Editable means edits to this
 checkout take effect without reinstalling.
 
-Settings live in `~/.config/reviewer/.env`, created from `.env.example` on first
+Settings live in `~/.config/agentgate/.env`, created from `.env.example` on first
 install. A globally installed command cannot rely on a `.env` in the checkout, so
 that file is what makes it work from anywhere. Three locations are read, most
 specific first, and a shell variable always wins:
 
 1. `.env` in the current directory or above — lets a repo carry its own settings
 2. `.env` in this checkout — only present for an editable install
-3. `~/.config/reviewer/.env` — the one a normal install uses
+3. `~/.config/agentgate/.env` — the one a normal install uses
 
-To uninstall: `uv tool uninstall multi-agent-code-reviewer`.
+To uninstall: `uv tool uninstall agentgate`.
 
 ## Develop
 
 ```bash
 uv venv --python 3.13 && uv pip install -e ".[dev]"
 cp .env.example .env      # add GOOGLE_API_KEY (or ANTHROPIC_API_KEY)
-review doctor             # check what is configured before spending anything
-review local HEAD~1
+agentgate doctor             # check what is configured before spending anything
+agentgate local HEAD~1
 ```
 
 ## Providers
@@ -87,7 +87,7 @@ START → prepare → warm_cache ──┬─→ security ──────┐
                                              finalize → END
 ```
 
-`review graph` prints the compiled mermaid, which is the authoritative version.
+`agentgate graph` prints the compiled mermaid, which is the authoritative version.
 
 Three ordering decisions carry weight:
 
@@ -111,7 +111,7 @@ A repository can carry its own review configuration, the way it carries its own
 linter config:
 
 ```
-.reviewer/
+.agentgate/
   config.env    settings — the same keys as .env
   rules.md      review guidance specific to this codebase
   ignore        extra paths to skip, one glob per line
@@ -136,12 +136,12 @@ configuration to distinguish them from the source under review, which is data.
 ## Reviewing
 
 ```bash
-review local HEAD~1                  # local diff
-review local --staged                # the index
-review local --mode single           # one generalist, the baseline
-review local --no-verify             # skip the gate (for measurement)
-review pr owner/repo 123             # a GitHub PR — dry run
-review pr owner/repo 123 --post      # ...and actually post, after confirming
+agentgate local HEAD~1                  # local diff
+agentgate local --staged                # the index
+agentgate local --mode single           # one generalist, the baseline
+agentgate local --no-verify             # skip the gate (for measurement)
+agentgate pr owner/repo 123             # a GitHub PR — dry run
+agentgate pr owner/repo 123 --post      # ...and actually post, after confirming
 ```
 
 `--post` is off by default and prompts before writing. Findings are posted as one
