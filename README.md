@@ -105,6 +105,34 @@ Three ordering decisions carry weight:
 keeping it outside means the eval harness can run thousands of reviews with no
 possibility of writing to anyone's repository.
 
+## Per-project settings
+
+A repository can carry its own review configuration, the way it carries its own
+linter config:
+
+```
+.reviewer/
+  config.env    settings — the same keys as .env
+  rules.md      review guidance specific to this codebase
+  ignore        extra paths to skip, one glob per line
+```
+
+Found by walking up from the working directory, so it works from a subdirectory.
+Settings are read before the global config but never override a shell variable.
+
+`rules.md` is the one worth writing. Generic reviewers find generic bugs; the
+defects a codebase produces repeatedly are the ones only its maintainers can name:
+
+```markdown
+- All database access goes through `db/gateway.ts`. Direct `pg.query` calls are a
+  high-severity finding, even when the SQL itself is safe.
+- Money is always integer cents. A float touching a currency value is a bug.
+```
+
+Rules are added to the per-role message, not the shared system prompt, so the
+cached prefix stays identical across reviewers. They are labelled as maintainer
+configuration to distinguish them from the source under review, which is data.
+
 ## Reviewing
 
 ```bash

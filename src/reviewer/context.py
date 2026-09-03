@@ -14,6 +14,7 @@ assembled context so the number reported to the user is not a guess.
 from __future__ import annotations
 
 from .config import FILE_TOKEN_BUDGET, REVIEW_TOKEN_BUDGET, WINDOW_PADDING
+from .project import is_ignored, load_ignore
 from .schema import FileContext, FileDiff, ReviewRequest
 
 # Deliberately pessimistic: over-estimating shrinks a window, which is safe.
@@ -84,8 +85,11 @@ def build_contexts(request: ReviewRequest) -> tuple[dict[str, FileContext], list
     """Returns (contexts, dropped_paths). Files are admitted largest-change-first
     until the review budget is spent; whatever doesn't fit is named in the report
     rather than quietly skipped."""
+    ignore = load_ignore(request.repo_root)
     candidates = sorted(
-        request.reviewable, key=lambda f: len(f.changed_lines), reverse=True
+        (f for f in request.reviewable if not is_ignored(f.path, ignore)),
+        key=lambda f: len(f.changed_lines),
+        reverse=True,
     )
     contexts: dict[str, FileContext] = {}
     dropped: list[str] = []

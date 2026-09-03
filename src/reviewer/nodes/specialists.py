@@ -8,6 +8,7 @@ from uuid import uuid4
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..config import specialist_llm, structured
+from ..project import load_rules
 from ..prompts.specialists import SHARED_SYSTEM, context_message, role_message
 from ..schema import Finding, FindingBatch, Problem, validate_fix
 from ..state import SpecialistTask
@@ -27,7 +28,7 @@ def specialist(task: SpecialistTask) -> dict:
         [
             SystemMessage(SHARED_SYSTEM),
             HumanMessage(content=cached_block(context_message(task["request"], contexts))),
-            HumanMessage(role_message(role)),
+            HumanMessage(role_message(role, load_rules(task["request"].repo_root))),
         ],
         config={
             "run_name": f"specialist:{role}",

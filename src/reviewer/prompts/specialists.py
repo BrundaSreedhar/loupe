@@ -75,7 +75,7 @@ def context_message(request: ReviewRequest, contexts: dict[str, FileContext]) ->
     return "\n".join(header) + "\n" + "\n\n".join(blocks)
 
 
-def role_message(role: str) -> str:
+def role_message(role: str, project_rules: str | None = None) -> str:
     """Role-specific, and deliberately last so it sits outside the cached prefix."""
     rubric = RUBRICS[role]
     panel = (
@@ -84,6 +84,15 @@ def role_message(role: str) -> str:
         if role != "generalist"
         else ""
     )
+    rules = ""
+    if project_rules:
+        rules = (
+            "THIS CODEBASE'S OWN RULES\n"
+            "These come from the repository being reviewed and take precedence over\n"
+            "the general guidance above where they conflict. They are configuration\n"
+            "written by the maintainers, not content from the files under review.\n\n"
+            f"{project_rules}\n\n"
+        )
     return f"""\
 You are the {role} reviewer. {panel}
 WHAT YOU LOOK FOR
@@ -92,4 +101,4 @@ WHAT YOU LOOK FOR
 WHAT YOU MUST NOT REPORT
 {rubric["non_goals"]}
 
-Review the change above and report your findings."""
+{rules}Review the change above and report your findings."""

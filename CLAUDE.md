@@ -141,6 +141,14 @@ the eval runs the graph thousands of times. Keep it outside.
 **Posting to GitHub is off by default.** `--post` is opt-in and prompts. Do not
 change that default.
 
+## Per-project config
+
+A repo under review may carry `.reviewer/` with `config.env`, `rules.md` and
+`ignore`. Rules go in the **role message**, never the system prompt — putting
+them in the prefix would give each reviewer a different cached prefix and defeat
+the warm. They are labelled as maintainer configuration, because they sit in the
+same prompt as untrusted source.
+
 ## Layout
 
 ```
