@@ -13,7 +13,6 @@ import re
 
 import pytest
 
-from evals.corpus import build_request
 from agentgate.schema import (
     FindingBatch,
     IndexedVerdict,
@@ -22,6 +21,7 @@ from agentgate.schema import (
     RawFinding,
     VerdictBatch,
 )
+from evals.corpus import build_request
 
 ORIGINAL = "\n".join(f"value_{i} = compute({i})" for i in range(1, 31)) + "\n"
 MUTATED = ORIGINAL.replace("value_4 = compute(4)", "value_4 = compute(5)").replace(

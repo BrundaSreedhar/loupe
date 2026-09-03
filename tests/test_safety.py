@@ -90,9 +90,9 @@ def test_a_planted_key_never_reaches_the_model(monkeypatch):
     file, not the credential."""
     import agentgate.nodes.prepare as prepare_mod
     import agentgate.nodes.specialists as spec_mod
-    from evals.corpus import build_request
     from agentgate.prompts.specialists import context_message
     from agentgate.schema import FindingBatch
+    from evals.corpus import build_request
 
     seen: list[str] = []
 
