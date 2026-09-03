@@ -209,7 +209,7 @@ evals/
 
 ## Testing
 
-225 tests, no network. Model calls are faked at the node boundary. The end-to-end
+223 tests, no network. Model calls are faked at the node boundary. The end-to-end
 tests in `test_graph_e2e.py` fake the models but run the real graph, which is what
 catches wiring bugs the unit tests miss.
 

@@ -263,7 +263,7 @@ pytest -q
 ruff check src evals tests
 ```
 
-225 tests, no network — model calls are faked at the node boundary. The
+223 tests, no network — model calls are faked at the node boundary. The
 end-to-end tests run the real graph against fake models, which is what catches
 wiring bugs the unit tests miss.
 
