@@ -112,6 +112,18 @@ Python only, via `ast` — a regex approximating a parser across ten languages i
 how a reviewer ends up reading the wrong `validate`, and being wrong there is
 invisible to everyone downstream.
 
+## What a review cost
+
+`ReviewResult.tokens` carries calls, input, output, thinking, and cache reads
+against cache writes, per model. Collected by a callback handler passed in the
+graph config — not by threading a return value through the nodes — so it sees
+retries and fallbacks too, and survives the parallel fan-out because LangGraph
+propagates config callbacks to every branch.
+
+Zero is not free. A provider that reports no usage must render as "not reported";
+the eval harness has `Report.metered` for exactly that, and it is the same rule as
+`Report.reviewed`.
+
 ## Memory
 
 Findings carry both an `id` (uuid, per run, used to match a verdict to its claim)
@@ -145,6 +157,14 @@ policies and let `DailyQuotaExhausted` propagate rather than catching it.
 cannot check, which is right for a bad response and wrong for a quota failure —
 that produces a clean-looking review that never happened. Call `raise_if_terminal`
 first.
+
+**Anthropic reports cache writes in three keys, not one.** When the per-TTL
+breakdown is present, `langchain_anthropic` moves the numbers into
+`ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens` and sets
+`cache_creation` to 0 so nothing double-counts. Read only the obvious key and
+every Anthropic cache write reports as zero — which reads as "warming the prefix
+is free", the one conclusion the measurement exists to test. `tokens.py` sums all
+three; the behaviour is in the installed package, not in anyone's memory.
 
 **The gate needs the definitions too.** Measured, not guessed: with the verifier
 given only the changed file, a correct cross-file finding was rejected as
@@ -209,7 +229,7 @@ evals/
 
 ## Testing
 
-223 tests, no network. Model calls are faked at the node boundary. The end-to-end
+230 tests, no network. Model calls are faked at the node boundary. The end-to-end
 tests in `test_graph_e2e.py` fake the models but run the real graph, which is what
 catches wiring bugs the unit tests miss.
 

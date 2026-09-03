@@ -8,7 +8,8 @@ from typing import Literal
 from .fallback import reset_usage, usage
 from .graph import build_graph
 from .quota import raise_if_terminal
-from .schema import Finding, Problem, ReviewRequest, ReviewResult, Verdict
+from .schema import Finding, Problem, ReviewRequest, ReviewResult, TokenUsage, Verdict
+from .tokens import Meter, collect
 
 _GRAPH = None
 
@@ -29,8 +30,13 @@ def run_review(
     lint: bool | None = None,
 ) -> ReviewResult:
     reset_usage()
+    # Passed in the config rather than used as a context manager: the reviewers
+    # run in parallel threads, and a callback on the config is propagated to every
+    # branch by LangGraph, where a context variable's propagation is not something
+    # to rely on across a thread pool.
+    meter = Meter()
     try:
-        final = _invoke(request, mode, verify, run_name, remember, lint)
+        final = _invoke(request, mode, verify, run_name, remember, lint, meter)
     except Exception as exc:  # noqa: BLE001 — re-raised immediately; this only
         # decides which exception the caller sees.
         # A daily cap has to arrive as DailyQuotaExhausted whichever node hit it.
@@ -40,10 +46,10 @@ def run_review(
         # and ground through the rest of the corpus failing identically.
         raise_if_terminal(exc)
         raise
-    return _assemble(request, mode, verify, final)
+    return _assemble(request, mode, verify, final, collect(meter))
 
 
-def _invoke(request, mode, verify, run_name, remember, lint):
+def _invoke(request, mode, verify, run_name, remember, lint, meter):
     return _graph().invoke(
         {
             "request": request,
@@ -71,11 +77,18 @@ def _invoke(request, mode, verify, run_name, remember, lint):
             # N findings fan out in one superstep; the default limit is per-step,
             # but deep verify fan-outs on large diffs still want headroom.
             "recursion_limit": 100,
+            # Every model call in the run reports its usage here, retries and
+            # fallbacks included.
+            "callbacks": [meter],
         },
     )
 
 def _assemble(
-    request: ReviewRequest, mode: str, verify: bool, final: dict
+    request: ReviewRequest,
+    mode: str,
+    verify: bool,
+    final: dict,
+    tokens: TokenUsage | None = None,
 ) -> ReviewResult:
     raw: list[Finding] = final.get("findings") or []
     merged: list[Finding] = final.get("merged") or []
@@ -96,6 +109,7 @@ def _assemble(
 
     confirmed = sum(1 for v in verdicts if v.status == "CONFIRMED")
     return ReviewResult(
+        tokens=tokens or TokenUsage(),
         request_ref=request.ref,
         mode=mode,
         verified=verify,

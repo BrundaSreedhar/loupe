@@ -231,6 +231,37 @@ class Problem(BaseModel):
     severity: Literal["warning", "error"] = "warning"
 
 
+class TokenUsage(BaseModel):
+    """What one review cost.
+
+    `cache_read` and `cache_write` are separate because the architecture makes a
+    claim about them: warming the shared prefix once is supposed to turn four
+    cache writes into one write and three reads. That claim was unmeasurable
+    until these were recorded.
+    """
+
+    calls: int = 0
+    input: int = 0
+    output: int = 0
+    cache_read: int = 0
+    cache_write: int = 0
+    reasoning: int = 0
+    # Per model, because roles are pointed at different models on purpose — a
+    # single total hides which daily allowance the spend came out of.
+    by_model: dict[str, dict[str, int]] = Field(default_factory=dict)
+
+    @property
+    def total(self) -> int:
+        return self.input + self.output
+
+    @property
+    def cache_hit_rate(self) -> float:
+        """Share of cached input that was read rather than written. 0.0 when
+        nothing was cacheable, which is not the same as a cache that missed."""
+        cached = self.cache_read + self.cache_write
+        return self.cache_read / cached if cached else 0.0
+
+
 class ReviewResult(BaseModel):
     request_ref: str
     mode: Literal["single", "multi"]
@@ -242,6 +273,9 @@ class ReviewResult(BaseModel):
     problems: list[Problem] = Field(default_factory=list)
     delta: object | None = None
     usage: dict[str, float] = Field(default_factory=dict)
+    # Kept apart from `usage`, which is flat counts and rates. Tokens are
+    # structured — per model, and split by how the cache treated them.
+    tokens: TokenUsage = Field(default_factory=lambda: TokenUsage())
 
 
 class MergedFinding(Claim):

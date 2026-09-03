@@ -30,6 +30,10 @@ class CaseScore:
     contexts: int = 0
     fallback_stages: int = 0
     mutator: str = ""
+    calls: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cache_read: int = 0
 
 
 @dataclass
@@ -69,6 +73,36 @@ class Report:
         return mean(vals) if vals else 0.0
 
     @property
+    def tokens_per_review(self) -> float:
+        """Input plus output, averaged over the cases that actually ran.
+
+        Reported beside detection because that is the trade being made. An arm
+        that finds one more defect for twice the tokens is a different proposition
+        from one that finds it for free, and the table used to show only half of
+        that."""
+        return mean([s.tokens_in + s.tokens_out for s in self.scores]) if self.scores else 0.0
+
+    @property
+    def calls_per_review(self) -> float:
+        return mean([s.calls for s in self.scores]) if self.scores else 0.0
+
+    @property
+    def cache_hit_rate(self) -> float:
+        """Share of input tokens served from cache. The warm exists to make this
+        large in `multi`; in `single` there is nobody to share a prefix with, so a
+        low number there is correct rather than a regression."""
+        total = sum(s.tokens_in for s in self.scores)
+        return sum(s.cache_read for s in self.scores) / total if total else 0.0
+
+    @property
+    def metered(self) -> int:
+        """Cases whose token usage was actually reported by the provider.
+
+        Zero means the numbers below are missing, not free — the same trap as
+        reporting a review that never happened as a clean one."""
+        return sum(1 for s in self.scores if s.calls)
+
+    @property
     def reviewed(self) -> int:
         """Cases where the reviewers were actually shown something.
 
@@ -99,6 +133,10 @@ class Report:
             "n_defect": len(self._d()),
             "n_clean": len(self._c()),
             "reviewed": self.reviewed,
+            "tokens_per_review": self.tokens_per_review,
+            "calls_per_review": self.calls_per_review,
+            "cache_hit_rate": self.cache_hit_rate,
+            "metered": self.metered,
             "fell_back": self.fell_back,
             "scored": len(self.scores),
         }
@@ -132,6 +170,10 @@ def score_case(case: Case, result: ReviewResult) -> CaseScore:
         contexts=int(result.usage.get("contexts", 0)),
         fallback_stages=int(result.usage.get("fallback_stages", 0)),
         mutator=case.truth.name if case.truth else "",
+        calls=result.tokens.calls,
+        tokens_in=result.tokens.input,
+        tokens_out=result.tokens.output,
+        cache_read=result.tokens.cache_read,
     )
 
 

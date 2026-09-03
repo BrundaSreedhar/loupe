@@ -53,6 +53,36 @@ def render_problems(result: ReviewResult, console: Console) -> None:
         console.print(Padding(line, (0, 0, 0, 4)))
 
 
+def _short(n: int) -> str:
+    return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
+
+
+def render_tokens(result: ReviewResult, console: Console) -> None:
+    """What the review cost. Printed whether or not it found anything — a clean
+    review is not a free one, and the only way to know four reviewers are worth
+    one is to see the bill next to the findings."""
+    t = result.tokens
+    if not t.calls:
+        return
+    line = (
+        f"  [dim]{t.calls} call(s)   ·   {_short(t.input)} in · "
+        f"{_short(t.output)} out"
+    )
+    if t.reasoning:
+        line += f" ({_short(t.reasoning)} thinking)"
+    if t.cache_read or t.cache_write:
+        line += (
+            f"   ·   cache {_short(t.cache_read)} read / "
+            f"{_short(t.cache_write)} written"
+        )
+    if len(t.by_model) > 1:
+        line += "   ·   " + ", ".join(
+            f"{model} {_short(row['input'] + row['output'])}"
+            for model, row in sorted(t.by_model.items())
+        )
+    console.print(line + "[/dim]")
+
+
 def render_delta(result: ReviewResult, console: Console) -> None:
     """What changed since the last review of this branch.
 
@@ -86,6 +116,7 @@ def render(result: ReviewResult, request: ReviewRequest, console: Console | None
                 f"{result.usage.get('merged_count', 0):.0f} merged → 0 confirmed[/dim]"
             )
         render_delta(result, console)
+        render_tokens(result, console)
         render_problems(result, console)
         console.print()
         return
@@ -147,6 +178,7 @@ def render(result: ReviewResult, request: ReviewRequest, console: Console | None
         )
         + "[/dim]"
     )
+    render_tokens(result, console)
     render_problems(result, console)
     console.print()
 

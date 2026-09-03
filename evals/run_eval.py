@@ -138,6 +138,11 @@ def render_comparison(results: dict[str, list[Report]]) -> None:
     table.add_column("silent on clean", justify="right")
     table.add_column("gate rejected", justify="right")
     table.add_column("merged away", justify="right")
+    # The cost half of the trade. Detection alone cannot say whether an arm is
+    # worth running — four reviewers that find one more defect for four times the
+    # tokens is a different answer from four that find it for the same spend.
+    table.add_column("tokens/review", justify="right")
+    table.add_column("cache hit", justify="right")
 
     for arm, reps in results.items():
         det_m, det_s = spread([r.detection_rate for r in reps])
@@ -145,7 +150,11 @@ def render_comparison(results: dict[str, list[Report]]) -> None:
         sil_m, _ = spread([r.clean_silence_rate for r in reps])
         rej_m, _ = spread([r.rejection_rate for r in reps])
         mrg_m, _ = spread([r.merge_rate for r in reps])
+        tok_m, tok_s = spread([r.tokens_per_review for r in reps])
+        cache_m, _ = spread([r.cache_hit_rate for r in reps])
         pm = len(reps) > 1
+        # "0 tokens" would read as free rather than as unrecorded.
+        metered = all(r.metered for r in reps)
         table.add_row(
             arm,
             f"{det_m:.0%}" + (f" ±{det_s:.0%}" if pm else ""),
@@ -153,6 +162,9 @@ def render_comparison(results: dict[str, list[Report]]) -> None:
             f"{sil_m:.0%}",
             f"{rej_m:.0%}" if "verify" in arm else "—",
             f"{mrg_m:.0%}",
+            (f"{tok_m / 1000:.1f}k" + (f" ±{tok_s / 1000:.1f}k" if pm else ""))
+            if metered else "not reported",
+            f"{cache_m:.0%}" if metered else "—",
         )
     console.print()
     console.print(table)

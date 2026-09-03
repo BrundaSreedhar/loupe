@@ -215,6 +215,19 @@ each contribution can be read separately:
 | `multi` vs `single` | what four specialists find that one generalist doesn't |
 | `+verify` vs bare | what the gate removes, and what recall it costs |
 
+Every review reports what it cost — calls, input and output tokens, thinking
+tokens, and cache reads against cache writes — per model, because roles are
+pointed at different models on purpose. The arm table carries `tokens/review`
+beside detection for the same reason the false-positive column is there: an arm
+that finds one more defect for four times the tokens is a different proposition
+from one that finds it for the same spend. An arm whose provider reported no
+usage prints `not reported`, never `0`.
+
+The cache column is the one number that was previously an architectural claim
+rather than a measurement. Warming the shared prefix is supposed to turn four
+cache writes into one write and three reads; on a four-reviewer run that now
+reads 5.2k written against 27.4k read.
+
 Detection rate only means something next to the false-positive column: a reviewer
 that flags every line scores 100% on detection alone. `--repeats` reports the
 spread, which is the noise floor under every other number.
@@ -263,7 +276,7 @@ pytest -q
 ruff check src evals tests
 ```
 
-223 tests, no network — model calls are faked at the node boundary. The
+230 tests, no network — model calls are faked at the node boundary. The
 end-to-end tests run the real graph against fake models, which is what catches
 wiring bugs the unit tests miss.
 
