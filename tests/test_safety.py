@@ -90,9 +90,9 @@ def test_a_planted_key_never_reaches_the_model(monkeypatch):
     file, not the credential."""
     import loupe.nodes.prepare as prepare_mod
     import loupe.nodes.specialists as spec_mod
+    from evals.corpus import build_request
     from loupe.prompts.specialists import context_message
     from loupe.schema import FindingBatch
-    from evals.corpus import build_request
 
     seen: list[str] = []
 

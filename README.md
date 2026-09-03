@@ -2,6 +2,9 @@
 
 A code reviewer that is quiet unless it has something to say.
 
+A jeweller's loupe magnifies one small area and shows the flaws that are
+invisible at normal scale. This does that to a diff.
+
 Four specialists read a change in parallel, each looking for a different class of
 defect. Everything they produce is merged, then re-checked against the full source
 by a separate pass that is told to reject. What survives is what you see.
