@@ -14,7 +14,7 @@ REAL_KEYS = [
     ("AWS", 'aws_key = "AKIAIOSFODNN7EXAMPLE"'),
     ("GitHub", 'tok = "ghp_aB3xY9kLmN2pQ7rS4tU6vW8xZ1aB3cD5eF7g"'),
     ("Google", 'key = "AIzaSyC93xKq2mNvRt7YuIoP1aSdF4gHjKlZxCv"'),
-    ("Slack", 'slack = "xoxb-2847362819-Ab9XkLmNoPqRsTuVwXyZ"'),
+    ("Slack", 'slack = "xoxb-2847362819-Ab9XkLmNoPqRsTuVwZ"'),
     ("Anthropic", 'k = "sk-ant-api03-Xk9mNp2qRs7tUv4wYz1aBc6dEf8gHj3kLm5n"'),
     ("private key", "-----BEGIN RSA PRIVATE KEY-----"),
     ("JWT", 'jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N"'),
