@@ -246,6 +246,21 @@ def merger_llm() -> BaseChatModel:
     return _llm("low", max_tokens=4000, cheap=True)
 
 
+def with_short_output(llm: Any, limit: int = 16) -> Any:
+    """Cap the reply length, using whatever the bound provider calls that.
+
+    Anthropic takes `max_tokens`, Gemini `max_output_tokens`, Ollama
+    `num_predict`. Binding the wrong one is not a soft failure — the value is
+    forwarded to the provider's request config, which rejects unknown keys.
+    """
+    key = {
+        "anthropic": "max_tokens",
+        "google": "max_output_tokens",
+        "ollama": "num_predict",
+    }[PROVIDER]
+    return llm.bind(**{key: limit})
+
+
 def structured(llm: Any, schema: Any, label: str) -> Any:
     """Bind a schema, and wrap in a local fallback when one is configured.
 

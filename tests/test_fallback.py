@@ -134,3 +134,22 @@ def test_verifier_model_defaults_to_the_main_model(monkeypatch, isolated_config)
 
     config = isolated_config()
     assert config.VERIFIER_MODEL == config.MODEL == "gemini-3.5-flash"
+
+
+@pytest.mark.parametrize("provider,expected", [
+    ("google", "max_output_tokens"),
+    ("anthropic", "max_tokens"),
+    ("ollama", "num_predict"),
+])
+def test_short_output_uses_each_provider_s_own_parameter(
+    provider, expected, monkeypatch, isolated_config
+):
+    """Binding the wrong name is not a soft failure — the value is forwarded into
+    the provider's request config, which rejects unknown keys. This shipped broken
+    on Google and only surfaced because someone ran with -v."""
+    monkeypatch.setenv("LOUPE_PROVIDER", provider)
+    monkeypatch.setenv("GOOGLE_API_KEY", "dummy")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "dummy")
+    config = isolated_config()
+    bound = config.with_short_output(config.specialist_llm(), 16)
+    assert bound.kwargs == {expected: 16}

@@ -7,7 +7,7 @@ import logging
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
-from ..config import WARM_MIN_TOKENS, specialist_llm
+from ..config import WARM_MIN_TOKENS, specialist_llm, with_short_output
 from ..context import build_contexts
 from ..prompts.specialists import SHARED_SYSTEM, context_message
 from ..schema import Problem
@@ -53,7 +53,7 @@ def warm_cache(state: ReviewState, config: RunnableConfig) -> dict:
         log.info("skipping cache warm: prefix is only ~%d tokens", size)
         return {}
     try:
-        specialist_llm().bind(max_tokens=16).invoke(
+        with_short_output(specialist_llm()).invoke(
             [
                 SystemMessage(SHARED_SYSTEM),
                 HumanMessage(content=cached_block(context_message(state["request"], contexts))),

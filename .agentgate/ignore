@@ -1,5 +1,0 @@
-# Extra paths to skip, one glob per line, beyond the built-in filters.
-# Lockfiles, docs, vendored and minified files are already skipped.
-
-# src/generated/*
-# *.pb.ts
