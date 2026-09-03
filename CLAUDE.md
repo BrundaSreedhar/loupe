@@ -55,6 +55,10 @@ comment it out rather than relying on that.
 
 ## Commands
 
+`./install.sh` puts `review` on the PATH via `uv tool install --editable`, with
+settings in `~/.config/reviewer/.env`. Inside this checkout `.venv/bin/review`
+works too; they are the same code because the install is editable.
+
 ```bash
 review local HEAD~1                  # review a local diff
 review local --mode single           # one reviewer instead of four (1 call)

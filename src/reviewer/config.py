@@ -19,13 +19,23 @@ from dotenv import load_dotenv
 from langchain_core.language_models import BaseChatModel
 from langchain_core.rate_limiters import InMemoryRateLimiter
 
-# cwd first, so a repo under review can override; then the reviewer's own .env,
-# because `review local --repo-root ~/other-repo` gets run from anywhere and
-# python-dotenv only ever walks up from the working directory.
+# Three places, most specific first. Nothing overrides anything already set, so
+# an env var in the shell always wins.
+#
+#   1. cwd and above — lets the repo being reviewed carry its own settings.
+#   2. the reviewer's own checkout — for `--repo-root ~/elsewhere`, since
+#      python-dotenv only ever walks up from the working directory. Present only
+#      for an editable install; a normal install puts __file__ in site-packages.
+#   3. ~/.config/reviewer/.env — the one that makes `review` work from anywhere
+#      once it is installed as a command rather than run out of the checkout.
+USER_CONFIG = Path(
+    os.getenv("XDG_CONFIG_HOME", Path.home() / ".config")
+) / "reviewer" / ".env"
+
 load_dotenv()
-_own_env = Path(__file__).resolve().parents[2] / ".env"
-if _own_env.is_file():
-    load_dotenv(_own_env, override=False)
+for _candidate in (Path(__file__).resolve().parents[2] / ".env", USER_CONFIG):
+    if _candidate.is_file():
+        load_dotenv(_candidate, override=False)
 
 PROVIDER = os.getenv("REVIEWER_PROVIDER", "google").lower()
 

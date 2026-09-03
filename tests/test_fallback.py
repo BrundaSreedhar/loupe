@@ -97,62 +97,40 @@ def test_fallback_is_reported_as_an_error_not_a_footnote(monkeypatch):
     assert fb  # imported to make the dependency explicit
 
 
-def test_model_provider_mismatch_is_corrected(monkeypatch):
+def test_model_provider_mismatch_is_corrected(monkeypatch, isolated_config):
     """REVIEWER_MODEL left set to a Gemini model while the provider is ollama
     otherwise asks Ollama for 'gemini-3.5-flash' and fails much later."""
-    import importlib
-
     monkeypatch.setenv("REVIEWER_PROVIDER", "ollama")
     monkeypatch.setenv("REVIEWER_MODEL", "gemini-3.5-flash")
-    import reviewer.config as config
-
-    importlib.reload(config)
-    assert config.MODEL == "qwen2:7b"
+    assert isolated_config().MODEL == "qwen2:7b"
 
     monkeypatch.setenv("REVIEWER_MODEL", "qwen2:7b-32k")
-    importlib.reload(config)
-    assert config.MODEL == "qwen2:7b-32k"
-
-    monkeypatch.delenv("REVIEWER_PROVIDER")
-    monkeypatch.delenv("REVIEWER_MODEL")
-    importlib.reload(config)
+    assert isolated_config().MODEL == "qwen2:7b-32k"
 
 
-def test_verifier_can_use_a_different_model_from_the_reviewers(monkeypatch):
+def test_verifier_can_use_a_different_model_from_the_reviewers(monkeypatch, isolated_config):
     """Google's daily cap is per project AND per model, so pointing roles at
     different models gives each its own allowance instead of sharing one."""
-    import importlib
-
     monkeypatch.setenv("REVIEWER_PROVIDER", "google")
     monkeypatch.setenv("REVIEWER_MODEL", "gemini-3.5-flash")
     monkeypatch.setenv("REVIEWER_VERIFIER_MODEL", "gemini-3.6-flash")
     monkeypatch.setenv("REVIEWER_CHEAP_MODEL", "gemini-3.5-flash-lite")
     monkeypatch.setenv("GOOGLE_API_KEY", "dummy")
-    import reviewer.config as config
 
-    importlib.reload(config)
+    config = isolated_config()
     assert config.MODEL == "gemini-3.5-flash"
     assert config.VERIFIER_MODEL == "gemini-3.6-flash"
     assert config.specialist_llm().model.endswith("gemini-3.5-flash")
     assert config.verifier_llm().model.endswith("gemini-3.6-flash")
     assert config.merger_llm().model.endswith("gemini-3.5-flash-lite")
 
-    for var in ("REVIEWER_PROVIDER", "REVIEWER_MODEL", "REVIEWER_VERIFIER_MODEL",
-                "REVIEWER_CHEAP_MODEL", "GOOGLE_API_KEY"):
-        monkeypatch.delenv(var, raising=False)
-    importlib.reload(config)
 
-
-def test_verifier_model_defaults_to_the_main_model(monkeypatch):
-    import importlib
-
+def test_verifier_model_defaults_to_the_main_model(monkeypatch, isolated_config):
+    """Must not depend on whether the person running the tests has a verifier
+    model configured in their own ~/.config/reviewer/.env."""
     monkeypatch.setenv("REVIEWER_PROVIDER", "google")
     monkeypatch.setenv("REVIEWER_MODEL", "gemini-3.5-flash")
     monkeypatch.delenv("REVIEWER_VERIFIER_MODEL", raising=False)
-    import reviewer.config as config
 
-    importlib.reload(config)
-    assert config.VERIFIER_MODEL == config.MODEL
-    for var in ("REVIEWER_PROVIDER", "REVIEWER_MODEL"):
-        monkeypatch.delenv(var, raising=False)
-    importlib.reload(config)
+    config = isolated_config()
+    assert config.VERIFIER_MODEL == config.MODEL == "gemini-3.5-flash"

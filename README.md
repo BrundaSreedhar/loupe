@@ -9,6 +9,31 @@ Ships with an eval harness that scores the reviewer against seeded defects and
 clean controls, and a `single` mode that runs one generalist reviewer for
 comparison. Runs on Gemini or Claude.
 
+## Install
+
+```bash
+./install.sh          # makes `review` available from any directory
+review doctor         # check configuration
+```
+
+That uses `uv tool install --editable`, which builds an isolated environment for
+the tool and links `review` into `~/.local/bin` — so its dependencies never
+collide with whatever project you are standing in. Editable means edits to this
+checkout take effect without reinstalling.
+
+Settings live in `~/.config/reviewer/.env`, created from `.env.example` on first
+install. A globally installed command cannot rely on a `.env` in the checkout, so
+that file is what makes it work from anywhere. Three locations are read, most
+specific first, and a shell variable always wins:
+
+1. `.env` in the current directory or above — lets a repo carry its own settings
+2. `.env` in this checkout — only present for an editable install
+3. `~/.config/reviewer/.env` — the one a normal install uses
+
+To uninstall: `uv tool uninstall multi-agent-code-reviewer`.
+
+## Develop
+
 ```bash
 uv venv --python 3.13 && uv pip install -e ".[dev]"
 cp .env.example .env      # add GOOGLE_API_KEY (or ANTHROPIC_API_KEY)
