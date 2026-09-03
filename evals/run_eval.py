@@ -106,10 +106,9 @@ def check_did_work(results: dict[str, list[Report]]) -> bool:
             elif r.fell_back:
                 console.print(
                     f"[red]{arm} run {i}: {r.fell_back} of {len(r.scores)} cases "
-                    "fell back to the local model mid-run.[/red] These numbers mix "
-                    "two models and measure neither. Re-run when quota resets, or "
-                    "set LOUPE_PROVIDER=ollama to measure the local model on "
-                    "its own."
+                    "fell back to the spare model mid-run.[/red] These numbers mix "
+                    "two models and measure neither. Unset LOUPE_FALLBACK_MODEL "
+                    "and re-run when the quota resets."
                 )
                 ok = False
             elif r.reviewed == 0:

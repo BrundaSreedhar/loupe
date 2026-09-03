@@ -7,7 +7,6 @@ dependencies = [
     "langgraph>=1.2",
     "langchain-anthropic>=1.7",
     "langchain-google-genai>=4.4",
-    "langchain-ollama>=1.1",
     "langsmith>=0.12",
     "pydantic>=2.9",
     "typer>=0.15",

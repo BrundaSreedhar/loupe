@@ -25,33 +25,14 @@ pointing at `gemini-3.6-flash`.
 loupe doctor          # provider, model, key, rate limit — check before running
 ```
 
-Ollama is installed locally with `qwen2:7b`, and is wired in as a third provider.
-Use it for anything testing the plumbing rather than the review quality. Every bug
-found in this repo so far has been structural — a bad corpus, two filters
-disagreeing, a broken guard — and a small local model would have caught all of
-them for free and without limit.
+`LOUPE_MODEL` applies to whichever provider is active. A model name belonging to
+the other provider is detected and corrected with a warning, but set it correctly
+rather than relying on that.
 
-```bash
-LOUPE_PROVIDER=ollama loupe local HEAD~1     # run entirely on the local model
-LOUPE_FALLBACK_MODEL=qwen2:7b                 # or use it only when quota runs out
-```
-
-`qwen2:7b` needs `method="json_schema"` for structured output; `function_calling`
-returns None and fails. All call sites already use `json_schema` — do not change
-that without testing against the local model.
-
-The fallback fires **only** on a confirmed daily exhaustion, never on a transient
-per-minute limit — swapping a frontier model for a 7B one over a seven-second
-hiccup silently downgrades the review. Any review that used it says so, at error
-severity, and the eval refuses to report numbers from a run that mixed models.
-
-**Do not read a local model's findings as a quality signal.** On a planted
-off-by-one it reported a plausible but different issue and missed the seeded bug.
-It tells you the pipeline works, not whether the reviewer is good.
-
-`LOUPE_MODEL` applies to whichever provider is active. A Gemini model name left
-set while the provider is ollama is detected and corrected with a warning, but
-comment it out rather than relying on that.
+`LOUPE_FALLBACK_MODEL` names a second model to use once the primary's daily cap is
+hit. It fires only on a confirmed daily exhaustion, never on a transient
+per-minute limit. Leave it empty for eval runs: a result mixing two models
+measures neither, and the harness refuses to print one.
 
 ## Commands
 

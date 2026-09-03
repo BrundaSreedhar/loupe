@@ -1,14 +1,13 @@
-"""Falling back to a local model when the day's quota is gone.
+"""Falling back to a second model when the day's quota is gone.
 
 LangChain's own `with_fallbacks` takes exception *types*, which is too blunt here:
 a per-minute limit and a per-day exhaustion are both 429s, and falling back on the
-first would swap a frontier model for a 7B one over a seven-second hiccup. Only a
-confirmed daily exhaustion is worth switching for; everything else should wait and
-retry on the good model.
+first would swap models over a seven-second hiccup. Only a confirmed daily
+exhaustion is worth switching for; everything else should wait and retry.
 
-Falling back is recorded, not just logged. A review answered by a small local
-model is a different artefact from one answered by Gemini, and a set of eval
-numbers containing both is not a measurement of either.
+The daily cap is per model, so a second model is a second allowance. Falling back
+is recorded, not just logged: a review answered partly by another model is a
+different artefact, and a set of eval numbers containing both measures neither.
 """
 
 from __future__ import annotations
@@ -39,8 +38,8 @@ def usage() -> set[str]:
     return set(getattr(_state, "used", set()))
 
 
-class LocalFallback:
-    """Wraps a primary model call, switching to a local one on daily exhaustion.
+class QuotaFallback:
+    """Wraps a primary model call, switching to a spare one on daily exhaustion.
 
     Only `invoke` is implemented because that is all the nodes call. It is not a
     full Runnable, so it does not appear as its own span in tracing — the inner
@@ -62,8 +61,8 @@ class LocalFallback:
                 # Let the retry policy deal with it on the good model.
                 raise
             log.warning(
-                "%s: %s — falling back to the local model. Findings from this "
-                "point are from a smaller model and are not comparable.",
+                "%s: %s — falling back to the spare model. Findings from this "
+                "point come from a different model and are not comparable.",
                 self.label, info.describe(),
             )
             record(self.label)

@@ -145,10 +145,10 @@ mixed two models — both have happened, and both looked like clean measurements
 
 ## Providers and tracing
 
-Runs on Google Gemini, Anthropic Claude, or a local model through Ollama, selected
-with `LOUPE_PROVIDER`. A local model can also be configured as a fallback for
-when a hosted quota runs out; any review that used it says so, because a review
-answered by a smaller model is a different artefact.
+Runs on Google Gemini or Anthropic Claude, selected with `LOUPE_PROVIDER`. A
+second model can be named as a fallback for when the primary's daily allowance
+runs out — the cap is per model, so that is a whole extra allowance. Any review
+that used it says so, because a result mixing two models measures neither.
 
 Set `LANGSMITH_TRACING=true` and a key and one review becomes one trace, with
 named spans per reviewer and a finding id on every verification.

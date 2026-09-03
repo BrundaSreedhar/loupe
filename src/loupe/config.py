@@ -47,29 +47,15 @@ for _candidate in (Path(__file__).resolve().parents[2] / ".env", USER_CONFIG):
 
 PROVIDER = os.getenv("LOUPE_PROVIDER", "google").lower()
 
-_DEFAULT_MODEL = {
-    "google": "gemini-3.5-flash",
-    "anthropic": "claude-opus-5",
-    "ollama": "qwen2:7b",
-}
-_CHEAP_MODEL = {
-    "google": "gemini-3.5-flash-lite",
-    "anthropic": "claude-opus-5",
-    "ollama": "qwen2:7b",
-}
-_KEY_ENV = {
-    "google": "GOOGLE_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "ollama": "(none — runs locally)",
-}
+_DEFAULT_MODEL = {"google": "gemini-3.5-flash", "anthropic": "claude-opus-5"}
+_CHEAP_MODEL = {"google": "gemini-3.5-flash-lite", "anthropic": "claude-opus-5"}
+_KEY_ENV = {"google": "GOOGLE_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 
-# A local model to fall back to when the day's quota is exhausted. Empty disables
-# it, and the review fails instead — which is the right default for anything whose
-# output you intend to trust or measure.
+# A second model to fall back to when the day's quota is exhausted. The cap is per
+# model, so naming a different one here buys a whole extra allowance. Empty
+# disables it and the review fails instead, which is the right default for output
+# you intend to measure — two models in one result measures neither.
 FALLBACK_MODEL = os.getenv("LOUPE_FALLBACK_MODEL", "")
-OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-# Local models are slower per call but have no per-minute cap.
-OLLAMA_NUM_CTX = int(os.getenv("LOUPE_OLLAMA_NUM_CTX", "16384"))
 
 if PROVIDER not in _DEFAULT_MODEL:
     raise ValueError(f"LOUPE_PROVIDER must be one of {sorted(_DEFAULT_MODEL)}, got {PROVIDER!r}")
@@ -77,7 +63,7 @@ if PROVIDER not in _DEFAULT_MODEL:
 # Model names are recognisable by prefix, which is enough to catch the common
 # misconfiguration: LOUPE_MODEL left set to one provider's model while
 # LOUPE_PROVIDER points at another. Without this, switching to a local model
-# silently asks Ollama for "gemini-3.5-flash" and fails somewhere much later.
+# passes one provider's model name to the other and fails somewhere much later.
 _MODEL_PREFIX = {"google": ("gemini",), "anthropic": ("claude",)}
 
 
@@ -180,8 +166,6 @@ ON_SECRET = os.getenv("LOUPE_ON_SECRET", "redact").lower()
 def credentials_present() -> bool:
     if PROVIDER == "anthropic":
         return bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"))
-    if PROVIDER == "ollama":
-        return True  # nothing to authenticate against
     return bool(os.getenv("GOOGLE_API_KEY"))
 
 
@@ -217,39 +201,24 @@ VERIFY_MODE = os.getenv("LOUPE_VERIFY_MODE", "per_file")
 
 @cache
 def _rate_limiter() -> InMemoryRateLimiter | None:
-    if RPM <= 0 or PROVIDER == "ollama":
-        return None  # a local model has no quota to protect
+    if RPM <= 0:
+        return None
     return InMemoryRateLimiter(
         requests_per_second=RPM / 60, max_bucket_size=max(BURST, 1)
     )
 
 
-def _ollama(model: str, max_tokens: int) -> BaseChatModel:
-    from langchain_ollama import ChatOllama
-
-    return ChatOllama(
-        model=model,
-        base_url=OLLAMA_URL,
-        num_ctx=OLLAMA_NUM_CTX,
-        num_predict=max_tokens,
-        temperature=0,
-    )
-
-
-def local_llm(max_tokens: int = 8000) -> BaseChatModel | None:
-    """The fallback model, or None when no fallback is configured."""
+def fallback_llm(max_tokens: int = 8000) -> BaseChatModel | None:
+    """The model to use once the primary's daily allowance is gone, or None."""
     if not FALLBACK_MODEL:
         return None
-    return _ollama(FALLBACK_MODEL, max_tokens)
+    return _llm("high", max_tokens=max_tokens, model=FALLBACK_MODEL)
 
 
 def _llm(
     effort: str, max_tokens: int = 16000, cheap: bool = False, model: str | None = None
 ) -> BaseChatModel:
     model = model or (CHEAP_MODEL if cheap else MODEL)
-
-    if PROVIDER == "ollama":
-        return _ollama(model, max_tokens)
 
     if PROVIDER == "anthropic":
         from langchain_anthropic import ChatAnthropic
@@ -294,14 +263,13 @@ def merger_llm() -> BaseChatModel:
 def with_short_output(llm: Any, limit: int = 16) -> Any:
     """Cap the reply length, using whatever the bound provider calls that.
 
-    Anthropic takes `max_tokens`, Gemini `max_output_tokens`, Ollama
-    `num_predict`. Binding the wrong one is not a soft failure — the value is
-    forwarded to the provider's request config, which rejects unknown keys.
+    Anthropic takes `max_tokens`, Gemini `max_output_tokens`. Binding the wrong
+    one is not a soft failure — the value is forwarded to the provider's request
+    config, which rejects unknown keys.
     """
     key = {
         "anthropic": "max_tokens",
         "google": "max_output_tokens",
-        "ollama": "num_predict",
     }[PROVIDER]
     return llm.bind(**{key: limit})
 
@@ -314,9 +282,11 @@ def structured(llm: Any, schema: Any, label: str) -> Any:
     returns free text where the caller expects a parsed object is not a fallback.
     """
     primary = llm.with_structured_output(schema, method="json_schema")
-    local = local_llm()
-    if local is None or PROVIDER == "ollama":
+    spare = fallback_llm()
+    if spare is None or FALLBACK_MODEL == MODEL:
         return primary
-    from .fallback import LocalFallback
+    from .fallback import QuotaFallback
 
-    return LocalFallback(primary, local.with_structured_output(schema, method="json_schema"), label)
+    return QuotaFallback(
+        primary, spare.with_structured_output(schema, method="json_schema"), label
+    )

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from loupe.fallback import LocalFallback, reset_usage, usage
+from loupe.fallback import QuotaFallback, reset_usage, usage
 from tests.test_quota import DAILY, PER_MINUTE
 
 
@@ -46,7 +46,7 @@ def _clean():
 
 def test_daily_quota_falls_back():
     primary, local = _Primary(_Rate(DAILY)), _Local()
-    assert LocalFallback(primary, local, "verify").invoke("x") == "local"
+    assert QuotaFallback(primary, local, "verify").invoke("x") == "local"
     assert local.calls == 1
     assert usage() == {"verify"}
 
@@ -55,7 +55,7 @@ def test_per_minute_limit_does_not_fall_back():
     """Swapping models over a seven-second hiccup silently downgrades the review."""
     primary, local = _Primary(_Rate(PER_MINUTE)), _Local()
     with pytest.raises(_Rate):
-        LocalFallback(primary, local, "verify").invoke("x")
+        QuotaFallback(primary, local, "verify").invoke("x")
     assert local.calls == 0
     assert usage() == set()
 
@@ -63,13 +63,13 @@ def test_per_minute_limit_does_not_fall_back():
 def test_other_errors_are_not_swallowed():
     primary, local = _Primary(ValueError("bad schema")), _Local()
     with pytest.raises(ValueError):
-        LocalFallback(primary, local, "verify").invoke("x")
+        QuotaFallback(primary, local, "verify").invoke("x")
     assert local.calls == 0
 
 
 def test_no_fallback_when_primary_succeeds():
     primary, local = _Primary(), _Local()
-    assert LocalFallback(primary, local, "verify").invoke("x") == "primary"
+    assert QuotaFallback(primary, local, "verify").invoke("x") == "primary"
     assert local.calls == 0 and usage() == set()
 
 
@@ -98,14 +98,15 @@ def test_fallback_is_reported_as_an_error_not_a_footnote(monkeypatch):
 
 
 def test_model_provider_mismatch_is_corrected(monkeypatch, isolated_config):
-    """LOUPE_MODEL left set to a Gemini model while the provider is ollama
-    otherwise asks Ollama for 'gemini-3.5-flash' and fails much later."""
-    monkeypatch.setenv("LOUPE_PROVIDER", "ollama")
+    """LOUPE_MODEL left pointing at one provider's model while LOUPE_PROVIDER
+    names the other fails somewhere much later than it should."""
+    monkeypatch.setenv("LOUPE_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "dummy")
     monkeypatch.setenv("LOUPE_MODEL", "gemini-3.5-flash")
-    assert isolated_config().MODEL == "qwen2:7b"
+    assert isolated_config().MODEL == "claude-opus-5"
 
-    monkeypatch.setenv("LOUPE_MODEL", "qwen2:7b-32k")
-    assert isolated_config().MODEL == "qwen2:7b-32k"
+    monkeypatch.setenv("LOUPE_MODEL", "claude-opus-5")
+    assert isolated_config().MODEL == "claude-opus-5"
 
 
 def test_verifier_can_use_a_different_model_from_the_reviewers(monkeypatch, isolated_config):
@@ -139,7 +140,6 @@ def test_verifier_model_defaults_to_the_main_model(monkeypatch, isolated_config)
 @pytest.mark.parametrize("provider,expected", [
     ("google", "max_output_tokens"),
     ("anthropic", "max_tokens"),
-    ("ollama", "num_predict"),
 ])
 def test_short_output_uses_each_provider_s_own_parameter(
     provider, expected, monkeypatch, isolated_config
