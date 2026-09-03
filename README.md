@@ -115,6 +115,10 @@ that matches one line a little further down moves the finding there, rather than
 throwing away a real defect over a line number. The quote is printed with the
 finding, so the claim and its evidence arrive together.
 
+The gate is shown the same definitions. It is told to reject any finding resting
+on code it cannot see, so a verifier reading only the changed file rejects every
+correct cross-file finding — measured, and it happens exactly that way.
+
 **Definitions the changed lines call are looked up and included.** A reviewer
 shown only the file you edited has no idea what `validate(payload)` does, so it
 either guesses — which is where a share of the false alarms come from — or says
@@ -259,7 +263,7 @@ pytest -q
 ruff check src evals tests
 ```
 
-222 tests, no network — model calls are faked at the node boundary. The
+225 tests, no network — model calls are faked at the node boundary. The
 end-to-end tests run the real graph against fake models, which is what catches
 wiring bugs the unit tests miss.
 

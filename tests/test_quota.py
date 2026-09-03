@@ -114,3 +114,33 @@ def test_verify_propagates_quota_instead_of_rejecting_everything():
             verify_mod.verify({"path": "a.py", "findings": [finding], "source": "x = 1"})
     finally:
         verify_mod.verifier_llm = original
+
+
+def test_a_daily_cap_from_a_reviewer_reaches_the_caller_as_a_stop_signal(monkeypatch):
+    """Observed on a real run. The nodes with broad excepts translate a daily cap
+    already; a reviewer branch has none, because it has no failure to swallow. So
+    an exhausted quota came out as the provider's own error, the eval harness read
+    it as one bad case rather than a dead run, and carried on through the corpus
+    failing identically — the exact waste quota.py exists to prevent."""
+    import loupe.runner as runner
+    from loupe.quota import DailyQuotaExhausted
+    from loupe.schema import ReviewRequest
+
+    def blows_up(*args, **kwargs):
+        raise _Err(DAILY)
+
+    monkeypatch.setattr(runner, "_invoke", blows_up)
+    with pytest.raises(DailyQuotaExhausted):
+        runner.run_review(ReviewRequest(source="local", ref="HEAD"))
+
+
+def test_an_ordinary_failure_is_not_dressed_up_as_a_quota_problem(monkeypatch):
+    import loupe.runner as runner
+    from loupe.schema import ReviewRequest
+
+    def blows_up(*args, **kwargs):
+        raise ValueError("something else went wrong")
+
+    monkeypatch.setattr(runner, "_invoke", blows_up)
+    with pytest.raises(ValueError):
+        runner.run_review(ReviewRequest(source="local", ref="HEAD"))

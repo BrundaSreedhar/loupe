@@ -32,7 +32,9 @@ def reconsider(task: ConsensusTask) -> dict:
             batch: VerdictBatch = llm.invoke(
                 [
                     SystemMessage(SYSTEM),
-                    HumanMessage(user_prompt([finding], finding.file, task["source"])),
+                    HumanMessage(user_prompt(
+                        [finding], finding.file, task["source"], task.get("references") or []
+                    )),
                 ],
                 config={
                     "run_name": f"consensus:{finding.file}:{finding.line}",

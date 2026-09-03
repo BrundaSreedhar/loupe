@@ -33,7 +33,12 @@ def verify(task: VerifyTask) -> dict:
     llm = structured(verifier_llm(), VerdictBatch, "verify")
     try:
         batch: VerdictBatch = llm.invoke(
-            [SystemMessage(SYSTEM), HumanMessage(user_prompt(findings, path, task["source"]))],
+            [
+                SystemMessage(SYSTEM),
+                HumanMessage(
+                    user_prompt(findings, path, task["source"], task.get("references") or [])
+                ),
+            ],
             config={
                 "run_name": f"verify:{path}",
                 "tags": ["verify"],

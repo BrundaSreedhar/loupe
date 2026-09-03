@@ -249,14 +249,8 @@ def test_a_finding_quoting_code_that_is_not_there_is_dropped(monkeypatch, reques
     )
 
 
-def test_a_called_definition_reaches_every_reviewer_in_the_shared_prefix(
-    wired, monkeypatch, tmp_path
-):
-    """The point of the index: the reviewer sees the body of what the change
-    calls. It has to arrive in the cached block, or four reviewers pay four times
-    to read the same definitions."""
-    from loupe.runner import run_review
-
+def _crossfile_repo(tmp_path):
+    """A change that calls a function defined in another file."""
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "__init__.py").write_text("")
     (tmp_path / "app" / "validators.py").write_text(
@@ -268,10 +262,64 @@ def test_a_called_definition_reaches_every_reviewer_in_the_shared_prefix(
         "def handle(payload):\n    return validate(payload)\n"
     )
     (tmp_path / "app" / "handlers.py").write_text(handlers)
-
-    request = build_request("app/handlers.py", "def handle(payload):\n    pass\n", handlers, "e2e")
+    request = build_request(
+        "app/handlers.py", "def handle(payload):\n    pass\n", handlers, "e2e"
+    )
     request.repo_root = str(tmp_path)
+    return request
 
+
+def test_the_gate_sees_the_definitions_the_reviewers_saw(wired, monkeypatch, tmp_path):
+    """Found by running a real cross-file defect through it.
+
+    The reviewer caught the defect and quoted the right line; the gate rejected it
+    with an invented signature for the function, because it had been given the
+    changed file and nothing else. The gate is told to reject anything resting on
+    code it cannot see — so without this, every correct cross-file finding is
+    rejected by construction and the expansion above it buys nothing.
+    """
+    from loupe.runner import run_review
+
+    _, _, verify = wired
+    request = _crossfile_repo(tmp_path)
+
+    def files_a_cross_file_finding(messages, config):
+        return FindingBatch(findings=[RawFinding(
+            file="app/handlers.py",
+            line=5,
+            category="correctness",
+            severity="high",
+            summary="validate() is given a payload it does not check for an id",
+            failure_scenario="A payload with no id raises KeyError inside validate.",
+            confidence=0.9,
+            evidence="    return validate(payload)",
+        )])
+
+    import loupe.nodes.prepare as prepare_mod
+    import loupe.nodes.specialists as spec_mod
+
+    spec = _FakeLLM(files_a_cross_file_finding)
+    monkeypatch.setattr(spec_mod, "specialist_llm", lambda: spec)
+    monkeypatch.setattr(prepare_mod, "specialist_llm", lambda: spec)
+
+    run_review(request, mode="multi", verify=True)
+
+    assert verify.calls, "the gate never ran"
+    for call in verify.calls:
+        prompt = str(call["messages"][-1].content)
+        assert "BEGIN REFERENCED DEFINITIONS" in prompt
+        assert "Reject anything without an id." in prompt
+
+
+def test_a_called_definition_reaches_every_reviewer_in_the_shared_prefix(
+    wired, monkeypatch, tmp_path
+):
+    """The point of the index: the reviewer sees the body of what the change
+    calls. It has to arrive in the cached block, or four reviewers pay four times
+    to read the same definitions."""
+    from loupe.runner import run_review
+
+    request = _crossfile_repo(tmp_path)
     spec, _, _ = wired
     run_review(request, mode="multi", verify=False)
 

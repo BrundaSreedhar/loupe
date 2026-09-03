@@ -72,6 +72,7 @@ def route_verify(state: ReviewState):
         if f.content_after is not None
     }
 
+    references = state.get("references") or []
     by_file: dict[str, list] = defaultdict(list)
     for f in merged:
         by_file[f.file].append(f)
@@ -80,7 +81,12 @@ def route_verify(state: ReviewState):
         # One call per finding: independent judgements, N times the calls and N
         # copies of the same file source.
         return [
-            Send("verify", {"path": f.file, "findings": [f], "source": sources.get(f.file, "")})
+            Send("verify", {
+                "path": f.file,
+                "findings": [f],
+                "source": sources.get(f.file, ""),
+                "references": references,
+            })
             for f in merged
         ]
 
@@ -90,7 +96,12 @@ def route_verify(state: ReviewState):
     # independent — LOUPE_VERIFY_MODE=per_finding buys that back, and the eval
     # harness can price the difference.
     return [
-        Send("verify", {"path": path, "findings": fs, "source": sources.get(path, "")})
+        Send("verify", {
+            "path": path,
+            "findings": fs,
+            "source": sources.get(path, ""),
+            "references": references,
+        })
         for path, fs in by_file.items()
     ]
 
@@ -117,6 +128,7 @@ def route_consensus(state: ReviewState):
             "finding": merged[v.finding_id],
             "first": v,
             "source": sources.get(merged[v.finding_id].file, ""),
+            "references": state.get("references") or [],
         })
         for v in (state.get("verdicts") or [])
         if v.finding_id in merged and is_borderline(merged[v.finding_id], v)

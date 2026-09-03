@@ -9,7 +9,9 @@ the diff so it is reasoning from different evidence than the reviewer had.
 from __future__ import annotations
 
 from ..grounding import cited_text
+from ..index import Reference
 from ..schema import Finding
+from . import definitions
 
 SYSTEM = """\
 You are the verification gate on a code review. A reviewer has filed the finding
@@ -19,11 +21,18 @@ source you are given.
 You are given the complete current file, not a diff. Read the actual code. The
 reviewer saw a smaller window and may have guessed at the rest.
 
+Where a finding turns on a function defined in another file, that definition is
+included below the source, and the reviewer was shown it too. Read it before
+deciding. Rejecting a claim about what a function takes or returns as "an
+assumption about code not in this file", when its definition is printed right
+there, is a wrong rejection — check the claim against the text instead.
+
 REJECT when:
 - The described failure cannot actually occur: the input is validated elsewhere in
   this file, the branch is unreachable, or the types make it impossible.
 - The failure scenario is vague, hypothetical, or merely restates what the code does.
-- The finding depends on an assumption about code not present in this file.
+- The finding depends on an assumption about code you were not given — neither in
+  this file nor among the definitions below it.
 - It is a style or preference argument dressed up as a defect.
 - The cited line does not match the description and you cannot find the described
   defect anywhere else in the file.
@@ -44,7 +53,12 @@ the reviewer, and there is no cost to rejecting a finding that another reviewer
 also filed."""
 
 
-def user_prompt(findings: list[Finding], path: str, file_source: str) -> str:
+def user_prompt(
+    findings: list[Finding],
+    path: str,
+    file_source: str,
+    references: list[Reference] | None = None,
+) -> str:
     """One call may carry several findings on the same file. Judge each on its own
     evidence — the source is shared, the verdicts are not."""
     blocks = []
@@ -68,7 +82,7 @@ def user_prompt(findings: list[Finding], path: str, file_source: str) -> str:
 
 --- BEGIN SOURCE {path} ---
 {file_source}
---- END SOURCE {path} ---
+--- END SOURCE {path} ---{definitions.block(references or [], definitions.VERIFIER_LEAD)}
 
 Return one verdict per finding, using the index shown in brackets. Judge each
 finding independently: several reviewers filing near the same line is not evidence

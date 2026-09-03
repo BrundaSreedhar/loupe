@@ -146,6 +146,13 @@ cannot check, which is right for a bad response and wrong for a quota failure â€
 that produces a clean-looking review that never happened. Call `raise_if_terminal`
 first.
 
+**The gate needs the definitions too.** Measured, not guessed: with the verifier
+given only the changed file, a correct cross-file finding was rejected as
+"assumptions about the signature of code that was not provided" â€” its own words.
+The gate is told to reject anything resting on code it cannot see, so expansion
+without this makes every correct cross-file finding rejectable by construction,
+and buys nothing. `prompts/definitions.py` is shared by both for that reason.
+
 **The references belong in the cached prefix.** Same rule as the role rubric,
 opposite direction: definitions from the index go into `context_message`, which is
 byte-identical for all four reviewers, and `warm_cache` must send exactly what the
@@ -202,7 +209,7 @@ evals/
 
 ## Testing
 
-222 tests, no network. Model calls are faked at the node boundary. The end-to-end
+225 tests, no network. Model calls are faked at the node boundary. The end-to-end
 tests in `test_graph_e2e.py` fake the models but run the real graph, which is what
 catches wiring bugs the unit tests miss.
 

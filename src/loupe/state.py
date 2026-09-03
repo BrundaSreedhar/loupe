@@ -65,6 +65,7 @@ class ConsensusTask(TypedDict):
     finding: Finding
     first: Verdict
     source: str
+    references: list[Reference]
 
 
 class VerifyTask(TypedDict):
@@ -79,3 +80,7 @@ class VerifyTask(TypedDict):
     path: str
     findings: list[Finding]
     source: str
+    # The same definitions the reviewers were shown. Without them the gate must
+    # treat every cross-file claim as an unverifiable assumption and reject it,
+    # which would make the expansion above worthless.
+    references: list[Reference]

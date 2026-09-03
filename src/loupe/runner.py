@@ -7,6 +7,7 @@ from typing import Literal
 
 from .fallback import reset_usage, usage
 from .graph import build_graph
+from .quota import raise_if_terminal
 from .schema import Finding, Problem, ReviewRequest, ReviewResult, Verdict
 
 _GRAPH = None
@@ -28,7 +29,22 @@ def run_review(
     lint: bool | None = None,
 ) -> ReviewResult:
     reset_usage()
-    final = _graph().invoke(
+    try:
+        final = _invoke(request, mode, verify, run_name, remember, lint)
+    except Exception as exc:  # noqa: BLE001 — re-raised immediately; this only
+        # decides which exception the caller sees.
+        # A daily cap has to arrive as DailyQuotaExhausted whichever node hit it.
+        # The nodes with broad excepts already translate it, but a reviewer branch
+        # has none — it has no failure to swallow — so an exhausted quota came out
+        # as the provider's own error, the eval harness read it as one bad case,
+        # and ground through the rest of the corpus failing identically.
+        raise_if_terminal(exc)
+        raise
+    return _assemble(request, mode, verify, final)
+
+
+def _invoke(request, mode, verify, run_name, remember, lint):
+    return _graph().invoke(
         {
             "request": request,
             "mode": mode,
@@ -58,6 +74,9 @@ def run_review(
         },
     )
 
+def _assemble(
+    request: ReviewRequest, mode: str, verify: bool, final: dict
+) -> ReviewResult:
     raw: list[Finding] = final.get("findings") or []
     merged: list[Finding] = final.get("merged") or []
     verdicts: list[Verdict] = final.get("verdicts") or []
