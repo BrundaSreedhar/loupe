@@ -158,6 +158,14 @@ cannot check, which is right for a bad response and wrong for a quota failure â€
 that produces a clean-looking review that never happened. Call `raise_if_terminal`
 first.
 
+**A file path is diff content, in the terminal too.** Paths are
+attacker-controlled on a pull request, and the report and the progress lines are
+printed with Rich markup on. An unmatched `[/bold]` in a filename raises
+MarkupError and takes the review down; a well-formed `[link=...]` renders as
+something clickable the review never contained. Every path spliced into a markup
+string goes through `rich.markup.escape` â€” or build a `Text` and `.append` it,
+which never parses markup. Found by pointing loupe at its own diff.
+
 **Anthropic reports cache writes in three keys, not one.** When the per-TTL
 breakdown is present, `langchain_anthropic` moves the numbers into
 `ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens` and sets
@@ -229,7 +237,7 @@ evals/
 
 ## Testing
 
-251 tests, no network. Model calls are faked at the node boundary. The end-to-end
+256 tests, no network. Model calls are faked at the node boundary. The end-to-end
 tests in `test_graph_e2e.py` fake the models but run the real graph, which is what
 catches wiring bugs the unit tests miss.
 

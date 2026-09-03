@@ -25,6 +25,7 @@ from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
 from rich.console import Console
+from rich.markup import escape
 
 # Nodes worth narrating. Anything else in the graph is bookkeeping.
 _ROUTERS = {"fan_out", "route_verify", "route_consensus"}
@@ -32,6 +33,19 @@ _ROUTERS = {"fan_out", "route_verify", "route_consensus"}
 
 def _plural(n: int, one: str, many: str | None = None) -> str:
     return f"{n} {one}" if n == 1 else f"{n} {many or one + 's'}"
+
+
+def _safe(text: object) -> str:
+    """A path from the diff, made safe to put in a markup string.
+
+    File paths are attacker-controlled on a pull request, and these lines are
+    printed with Rich markup switched on. An unmatched `[/bold]` in a filename
+    raises MarkupError and takes the review down; a well-formed `[link=...]`
+    renders as a clickable link the review never contained. Same rule as the
+    source the reviewers read: it is data, not instructions — for the terminal
+    as much as for the model.
+    """
+    return escape(str(text))
 
 
 class Reporter(BaseCallbackHandler):
@@ -82,11 +96,11 @@ class Reporter(BaseCallbackHandler):
             claims = len(payload.get("findings") or [])
             return (
                 f"checking {_plural(claims, 'claim')} against the whole of "
-                f"[bold]{payload.get('path', '?')}[/bold]"
+                f"[bold]{_safe(payload.get('path', '?'))}[/bold]"
             )
         if name == "reconsider":
             finding = payload.get("finding")
-            where = f"{finding.file}:{finding.line}" if finding is not None else "a finding"
+            where = _safe(f"{finding.file}:{finding.line}") if finding is not None else "a finding"
             return f"asking a second time about {where} — the first two answers disagreed"
         if name == "warm_cache":
             return "writing the shared prefix to cache once, so the panel reads it"
@@ -112,7 +126,7 @@ class Reporter(BaseCallbackHandler):
     def _after_prepare(self, payload: dict, outputs: dict) -> str:
         contexts = outputs.get("contexts") or {}
         dropped = outputs.get("dropped") or []
-        names = ", ".join(sorted(contexts)[:3])
+        names = ", ".join(_safe(p) for p in sorted(contexts)[:3])
         more = f" and {len(contexts) - 3} more" if len(contexts) > 3 else ""
         tail = f" · [yellow]{len(dropped)} left out, over budget[/yellow]" if dropped else ""
         return f"windowed {_plural(len(contexts), 'file')} — {names}{more}{tail}"
@@ -151,7 +165,7 @@ class Reporter(BaseCallbackHandler):
         verdicts = outputs.get("verdicts") or []
         kept = sum(1 for v in verdicts if v.status == "CONFIRMED")
         gone = len(verdicts) - kept
-        where = payload.get("path", "?")
+        where = _safe(payload.get("path", "?"))
         if not kept:
             return f"[dim]{where}: nothing stood up ({_plural(gone, 'claim')} rejected)[/dim]"
         if not gone:

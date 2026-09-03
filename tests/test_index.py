@@ -292,3 +292,53 @@ def test_expansion_is_off_for_pull_requests_by_default():
     assert not enabled("auto", "github")
     assert enabled("on", "github")
     assert not enabled("off", "local")
+
+
+def test_a_definition_the_reviewer_can_already_see_counts_as_shown(tmp_path):
+    """Two files change together and one calls the other. Its definition is
+    deliberately not injected — the reviewer is already reading that file — but
+    it was reaching them, and the edge said the opposite."""
+    make_repo(tmp_path)
+    both = "from app.validators import validate\n\n\ndef handle(p):\n    return validate(p)\n"
+    request = ReviewRequest(
+        source="local", ref="test", repo_root=str(tmp_path),
+        files=[
+            FileDiff(path="app/handlers.py", change_type="modified", content_after=both,
+                     hunks=[Hunk(old_start=1, old_lines=5, new_start=1, new_lines=5, content="")]),
+            FileDiff(path="app/validators.py", change_type="modified", content_after=VALIDATORS,
+                     hunks=[Hunk(old_start=1, old_lines=1, new_start=1, new_lines=1, content="")]),
+        ],
+    )
+    contexts, _ = build_contexts(request)
+
+    references, _stats, edges = _gather(request, contexts)
+
+    edge = next(e for e in edges if e.name == "validate")
+    assert edge.definition.path == "app/validators.py"
+    assert not any(r.definition.path == "app/validators.py" for r in references), (
+        "no need to send source the reviewer is already reading"
+    )
+    assert edge.shown, "the reviewer could read it; the edge said they could not"
+
+
+def test_a_file_is_parsed_once_not_once_per_question(monkeypatch):
+    """Callers and imports are both read from the same tree."""
+    import ast as ast_mod
+
+    import loupe.index as index_mod
+
+    calls = []
+    real = ast_mod.parse
+
+    def counted(src, *a, **k):
+        calls.append(1)
+        return real(src)
+
+    monkeypatch.setattr(index_mod.ast, "parse", counted)
+
+    source = "from json import dumps\n\n\ndef go(x):\n    return dumps(x)\n"
+    tree = index_mod.parse(source)
+    index_mod.imported_names(source, "a.py", tree)
+    index_mod.called_names(source, {5}, tree)
+
+    assert len(calls) == 1

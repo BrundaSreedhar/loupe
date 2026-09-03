@@ -90,12 +90,11 @@ class Edge:
     caller: str  # the changed file the call is written in
     name: str
     definition: Definition
-    shown: bool  # whether its source was put in front of the reviewers
-
-    @property
-    def crosses_out(self) -> bool:
-        """Does this reach code the change does not touch?"""
-        return not self.shown or self.definition.path != self.caller
+    # Whether the reviewers could read this definition's source — either because
+    # it was injected, or because it is inside a file they were already given.
+    # Not "was it injected": a callee living in another file of the same change
+    # is deliberately not injected, and is the case this class exists to record.
+    shown: bool
 
 
 @dataclass
@@ -178,11 +177,23 @@ def build(repo_root: str | Path, max_files: int) -> Index:
     return index
 
 
-def called_names(source: str, lines: set[int]) -> dict[str, int]:
-    """Names called from the given lines, and how often. `a.b(x)` counts as `b`."""
+def parse(source: str) -> ast.Module | None:
+    """A file's syntax tree, or None if it will not parse.
+
+    Handed around rather than re-derived: the callers and the imports of one file
+    are both read from it, and parsing twice doubles the cost of every review for
+    nothing.
+    """
     try:
-        tree = ast.parse(source)
+        return ast.parse(source)
     except (SyntaxError, ValueError):
+        return None
+
+
+def called_names(source: str, lines: set[int], tree: ast.Module | None = None) -> dict[str, int]:
+    """Names called from the given lines, and how often. `a.b(x)` counts as `b`."""
+    tree = tree if tree is not None else parse(source)
+    if tree is None:
         return {}
 
     counts: dict[str, int] = {}
@@ -205,7 +216,9 @@ def called_names(source: str, lines: set[int]) -> dict[str, int]:
     return counts
 
 
-def imported_names(source: str, rel_path: str) -> dict[str, tuple[str, str | None]]:
+def imported_names(
+    source: str, rel_path: str, tree: ast.Module | None = None
+) -> dict[str, tuple[str, str | None]]:
     """Local name -> (module, original name). `None` means the module itself.
 
     Knowing where a name came from is most of the precision here: `from
@@ -213,9 +226,8 @@ def imported_names(source: str, rel_path: str) -> dict[str, tuple[str, str | Non
     from a third-party package says the repository's own `validate` is the wrong
     answer rather than the only one.
     """
-    try:
-        tree = ast.parse(source)
-    except (SyntaxError, ValueError):
+    tree = tree if tree is not None else parse(source)
+    if tree is None:
         return {}
 
     package = module_of(rel_path).rsplit(".", 1)[0] if "." in module_of(rel_path) else ""
@@ -359,8 +371,11 @@ def gather(
     found: list[tuple[str, str, Definition]] = []
     for fd in python_files:
         source = fd.content_after or ""
-        imports = imported_names(source, fd.path)
-        for name, count in called_names(source, fd.changed_lines).items():
+        tree = parse(source)
+        if tree is None:
+            continue
+        imports = imported_names(source, fd.path, tree)
+        for name, count in called_names(source, fd.changed_lines, tree).items():
             stats.names += 1
             defn = locate(name, imports, index, fd.path)
             if defn is None:
@@ -399,7 +414,12 @@ def gather(
 
     sent = {r.definition for r in references}
     edges = [
-        Edge(caller=caller, name=name, definition=defn, shown=defn in sent)
+        Edge(
+            caller=caller,
+            name=name,
+            definition=defn,
+            shown=defn in sent or on_screen(defn, visible),
+        )
         for caller, name, defn in sorted(found, key=lambda e: (e[0], e[1]))
     ]
     return references, stats, edges

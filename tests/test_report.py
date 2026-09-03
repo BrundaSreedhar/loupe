@@ -126,3 +126,45 @@ def test_a_silent_review_still_explains_itself():
     assert "No findings" in text
     assert "gate rejected" in text
     assert "non-numeric id reaching to_cents" in text
+
+
+def test_calls_within_one_file_are_left_off_the_map():
+    """A function calling its neighbour is already visible in the diff. Listing
+    those buried the edges that mattered under three times as many that did not."""
+    result = ReviewResult(
+        request_ref="HEAD", mode="multi", verified=True,
+        edges=[
+            _edge("app/emit.py", "render_delta", "app/emit.py"),
+            _edge("app/emit.py", "cited_text", "app/grounding.py"),
+        ],
+    )
+    text = out(render_changes, result)
+
+    assert "cited_text()" in text
+    assert "render_delta()" not in text
+    assert "1 cross-file call" in text
+
+
+def test_a_map_of_only_same_file_calls_prints_nothing():
+    result = ReviewResult(
+        request_ref="HEAD", mode="multi", verified=True,
+        edges=[_edge("app/emit.py", "render_delta", "app/emit.py")],
+    )
+    assert out(render_changes, result) == ""
+
+
+def test_a_path_carrying_terminal_markup_is_shown_not_obeyed():
+    """File paths are attacker-controlled on a pull request and these lines are
+    printed with markup on. An unmatched tag used to take the review down; a
+    well-formed link tag used to render as something clickable that the review
+    never contained."""
+    hostile = "src/a[/bold]b[link=https://example.invalid]c[/link].py"
+    result = ReviewResult(
+        request_ref="HEAD", mode="multi", verified=True,
+        edges=[_edge(hostile, "validate", "app/validators.py")],
+    )
+
+    text = out(render_changes, result)  # must not raise MarkupError
+
+    assert "[link=" in text, "the markup was interpreted instead of printed"
+    assert "[/bold]" in text

@@ -12,6 +12,7 @@ from dataclasses import asdict, is_dataclass
 
 import httpx
 from rich.console import Console
+from rich.markup import escape
 from rich.padding import Padding
 from rich.panel import Panel
 from rich.text import Text
@@ -91,15 +92,19 @@ def render_rejected(result: ReviewResult, console: Console, limit: int = 4) -> N
         console.print(f"  [dim]...and {len(rejected) - limit} more[/dim]")
 
 
-def render_changes(result: ReviewResult, console: Console, limit: int = 12) -> None:
-    """What the changed code calls, and where that lives.
+def render_changes(result: ReviewResult, console: Console, limit: int = 8) -> None:
+    """What the changed code reaches, and where that lives.
 
-    A reader looking at a review of six files has to hold the shape of the change
-    in their head before any finding means anything. This is the shape: which
-    changed file reaches which definition, and whether that definition is part of
-    the change or something it depends on.
+    Cross-file calls only. A function calling its neighbour in the same file is
+    something the reader can already see in the diff, and listing those buried
+    the handful of edges that matter under thirty that did not — on one real
+    change, 38 lines of which 11 were worth reading.
+
+    Ordered so calls into another file *of the same change* come first: that is
+    where a defect hides, because it is invisible in either file on its own.
     """
-    edges = result.edges
+    changed = {e.caller for e in result.edges}
+    edges = [e for e in result.edges if e.definition.path != e.caller]
     if not edges:
         return
 
@@ -109,31 +114,27 @@ def render_changes(result: ReviewResult, console: Console, limit: int = 12) -> N
 
     console.print()
     console.print("  [bold]What this change reaches[/bold]")
-    changed = set(by_caller)
     shown = 0
     for caller, calls in sorted(by_caller.items()):
-        console.print(f"    [bold]{caller}[/bold]")
+        console.print(f"    [bold]{escape(caller)}[/bold]")
+        calls.sort(key=lambda e: (e.definition.path not in changed, e.name))
         for edge in calls[:limit]:
             target = edge.definition
-            inside = target.path in changed
             line = Text("      ")
             line.append("calls ", style="dim")
             line.append(f"{target.name}()", style="cyan")
             line.append(" " * max(1, 22 - len(target.name)))
             line.append(f"{target.path}:{target.start}", style="dim")
-            if target.path == caller:
-                line.append("  (same file)", style="dim")
-            elif inside:
-                # The interesting one: two files in the same change, one calling
-                # the other. A defect that spans them is invisible in either.
-                line.append("  (also changed here)", style="yellow")
+            if target.path in changed:
+                line.append("  also changed here", style="yellow")
             console.print(line)
             shown += 1
         if len(calls) > limit:
             console.print(f"      [dim]...and {len(calls) - limit} more[/dim]")
     console.print(
-        f"  [dim]{shown} call(s) placed. Names defined in two places, or imported "
-        "from outside this repo, are left out rather than guessed.[/dim]"
+        f"  [dim]{shown} cross-file call(s). Calls within one file are left out, "
+        "and so are names defined in two places or imported from outside this "
+        "repo — a wrong edge is worse than a missing one.[/dim]"
     )
 
 
@@ -213,7 +214,8 @@ def render(result: ReviewResult, request: ReviewRequest, console: Console | None
         by_file.setdefault(f.file, []).append(f)
 
     for path, findings in by_file.items():
-        console.print(f"  [bold]{path}[/bold]")
+        # Escaped for the same reason as everywhere else: a path is diff content.
+        console.print(f"  [bold]{escape(path)}[/bold]")
         for f in findings:
             style = _SEVERITY_STYLE[f.severity]
             head = Text()

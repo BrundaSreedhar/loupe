@@ -6,6 +6,7 @@ import os
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from .adapters import github_pr, local_git
 from .adapters.local_git import GitError
@@ -60,7 +61,7 @@ def _explain_nothing(request, target: str) -> None:
         "reviewable.[/yellow]"
     )
     for path in request.skipped:
-        console.print(f"  [dim]skipped[/dim] {path}")
+        console.print(f"  [dim]skipped[/dim] {escape(path)}")
     console.print(
         "[dim]Docs, lockfiles, generated and vendored files are skipped — see "
         "filters.py. Binary and deleted files are skipped too.[/dim]"
@@ -99,7 +100,7 @@ def local(
 
     if request.skipped:
         console.print(f"[dim]Skipping {len(request.skipped)} non-source file(s): "
-                      f"{', '.join(request.skipped[:4])}"
+                      f"{', '.join(escape(p) for p in request.skipped[:4])}"
                       f"{'…' if len(request.skipped) > 4 else ''}[/dim]")
     console.print(
         f"[dim]Reviewing {len(request.reviewable)} file(s) · mode={mode} · "
