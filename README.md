@@ -1,232 +1,176 @@
-# Multi-agent code reviewer
+# agentgate
 
-Four specialist reviewers — security, correctness, performance, maintainability —
-fan out over one diff in parallel. Their findings are merged, then each one is
-re-checked against the full source file by a separate verification pass before it
-reaches a human.
+A code reviewer that is quiet unless it has something to say.
 
-Ships with an eval harness that scores the reviewer against seeded defects and
-clean controls, and a `single` mode that runs one generalist reviewer for
-comparison. Runs on Gemini or Claude.
-
-## Install
+Four specialists read a change in parallel, each looking for a different class of
+defect. Everything they produce is merged, then re-checked against the full source
+by a separate pass that is told to reject. What survives is what you see.
 
 ```bash
-./install.sh          # makes `agentgate` available from any directory
-agentgate doctor         # check configuration
-```
-
-That uses `uv tool install --editable`, which builds an isolated environment for
-the tool and links `agentgate` into `~/.local/bin` — so its dependencies never
-collide with whatever project you are standing in. Editable means edits to this
-checkout take effect without reinstalling.
-
-Settings live in `~/.config/agentgate/.env`, created from `.env.example` on first
-install. A globally installed command cannot rely on a `.env` in the checkout, so
-that file is what makes it work from anywhere. Three locations are read, most
-specific first, and a shell variable always wins:
-
-1. `.env` in the current directory or above — lets a repo carry its own settings
-2. `.env` in this checkout — only present for an editable install
-3. `~/.config/agentgate/.env` — the one a normal install uses
-
-To uninstall: `uv tool uninstall agentgate`.
-
-## Develop
-
-```bash
-uv venv --python 3.13 && uv pip install -e ".[dev]"
-cp .env.example .env      # add GOOGLE_API_KEY (or ANTHROPIC_API_KEY)
-agentgate doctor             # check what is configured before spending anything
+./install.sh
+agentgate doctor
 agentgate local HEAD~1
 ```
 
-## Providers
-
-Runs on Google Gemini or Anthropic Claude, selected with `REVIEWER_PROVIDER`.
-Gemini is the default because AI Studio has a free tier; get a key at
-[aistudio.google.com/apikey](https://aistudio.google.com/apikey).
-
-|  | `google` | `anthropic` |
-|---|---|---|
-| default model | `gemini-3.5-flash` | `claude-opus-5` |
-| key | `GOOGLE_API_KEY` | `ANTHROPIC_API_KEY` |
-| effort control | `thinking_budget` (-1 auto, 0 off) | `output_config.effort` |
-| prefix caching | implicit | explicit `cache_control` |
-
-The prompt structure is provider-independent — the shared context is kept
-byte-identical across reviewers and the per-role rubric goes last, which is what
-makes a prefix cache hit on either backend. Only the way the breakpoint is
-*expressed* differs, and that is confined to `cached_block()`.
-
-### Free-tier notes
-
-Google's free tier is Flash-only, is capped per minute and per day, and those
-caps change — check yours at
-[aistudio.google.com/rate-limit](https://aistudio.google.com/rate-limit) rather
-than trusting a number written here. `REVIEWER_RPM` throttles the client side to
-match; the fan-out will otherwise fire four calls at once.
-
-Reporting at the time of writing is that free-tier prompts and responses may be
-used to improve Google's models. This tool sends your source code to the API, so
-read Google's current terms before pointing it at anything you would not publish.
-The paid tier and Anthropic do not carry that condition.
-
-## The graph
+## Architecture
 
 ```
-START → prepare → warm_cache ──┬─→ security ──────┐
-                               ├─→ correctness ───┤
-                               ├─→ performance ───┤   Annotated[list, add]
-                               └─→ maintainability┘   fan-in
-                                                  ↓
-                                              dedupe
-                                                  ↓  Send() per finding
-                                              verify   ← the gate
-                                                  ↓
-                                             finalize → END
+                            ┌──────────────┐
+   diff ─────────────────►  │  preflight   │  secrets never leave the machine;
+   local git or GitHub PR   └──────┬───────┘  source is marked as data, not
+                                   │          instructions
+                            ┌──────▼───────┐
+                            │   prepare    │  budgeted, line-numbered windows
+                            └──────┬───────┘  of each changed file
+                                   │
+                            ┌──────▼───────┐
+                            │  warm_cache  │  one write, so the four reviewers
+                            └──────┬───────┘  below read a shared prefix
+                                   │
+         ┌───────────┬─────────────┼─────────────┬───────────┐
+         │           │             │             │           │
+    ┌────▼────┐ ┌────▼─────┐ ┌─────▼──────┐ ┌────▼────────┐  │  Send() × 4
+    │security │ │correct-  │ │performance │ │maintain-    │  │  in parallel
+    │         │ │ness      │ │            │ │ability      │  │
+    └────┬────┘ └────┬─────┘ └─────┬──────┘ └────┬────────┘  │
+         │           │             │             │           │
+         └───────────┴─────────────┼─────────────┴───────────┘
+                                   │  fan-in via a reducer, so no branch is lost
+                            ┌──────▼───────┐
+                            │    dedupe    │  merge before verifying — cheaper
+                            └──────┬───────┘
+                                   │
+                            ┌──────▼───────┐
+                            │    verify    │  ◄── the gate. Batched per file,
+                            └──────┬───────┘      reads whole source, told to
+                                   │              reject rather than agree
+                            ┌──────▼───────┐
+                            │   finalize   │  apply verdicts, rank, truncate
+                            └──────┬───────┘
+                                   │
+                    terminal ◄─────┴─────► GitHub review
+                                             (dry run unless --post)
 ```
 
-`agentgate graph` prints the compiled mermaid, which is the authoritative version.
+`agentgate graph` prints the compiled version, which is the authoritative one.
 
 Three ordering decisions carry weight:
 
-- **Dedupe runs before verify.** Verification is one model call per finding, so
-  every duplicate removed first is a call not made.
-- **warm_cache runs before the fan-out.** All four reviewers share one large
-  context prefix. Fired cold in parallel they all miss and all pay to write it
-  (~4×1.25× input); warming once makes it one write plus three reads (~1.55×).
-- **The role rubric is the last message, not the system prompt.** Caching is a
-  prefix match over `tools → system → messages`, so anything role-specific placed
-  before the context would give every branch a different prefix and defeat the
-  warm entirely.
+- **Dedupe before verify.** Verification costs a call per file; every duplicate
+  removed first is a call not made.
+- **Warm the cache before the fan-out.** All four reviewers share one large
+  prefix. Fired cold in parallel they all miss it and all pay to write it.
+- **The role rubric is the last message, not the system prompt.** Caching matches
+  on a prefix, so anything role-specific placed before the source gives every
+  branch a different prefix and defeats the warm entirely.
 
-`emit` is deliberately *not* a graph node. Posting to a PR is a side effect, and
-keeping it outside means the eval harness can run thousands of reviews with no
-possibility of writing to anyone's repository.
+`emit` is deliberately not a graph node. Posting to a pull request is a side
+effect, and the eval harness runs this graph thousands of times.
+
+## Using it
+
+```bash
+agentgate local HEAD~1           # a local diff
+agentgate local --staged         # the index
+agentgate local --mode single    # one generalist instead of four
+agentgate local --no-verify      # skip the gate, for measurement
+agentgate local HEAD~1 -v        # show what each stage did
+
+agentgate pr owner/repo 123      # a pull request — dry run
+agentgate pr owner/repo 123 --post   # ...and publish, after confirming
+```
+
+`agentgate local <ref>` diffs a ref against your working tree, so `HEAD` means
+uncommitted changes and `HEAD~1` means the last commit plus anything uncommitted.
+
+Findings carry a concrete failure scenario, and a replacement patch where the
+reviewer could write one exactly — which becomes a one-click suggestion on a pull
+request. Docs, lockfiles, generated and vendored files are skipped, and the run
+says what it skipped.
 
 ## Per-project settings
 
 ```bash
 cd your-project
-agentgate init        # creates .agentgate/ with commented templates
+agentgate init
 ```
-
-A repository can carry its own review configuration, the way it carries its own
-linter config:
 
 ```
 .agentgate/
-  config.env    settings — the same keys as .env
-  rules.md      review guidance specific to this codebase
+  rules.md      review guidance for this codebase
   ignore        extra paths to skip, one glob per line
+  config.env    settings, read before the global config
 ```
-
-Found by walking up from the working directory, so it works from a subdirectory.
-Settings are read before the global config but never override a shell variable.
 
 `rules.md` is the one worth writing. Generic reviewers find generic bugs; the
 defects a codebase produces repeatedly are the ones only its maintainers can name:
 
 ```markdown
-- All database access goes through `db/gateway.ts`. Direct `pg.query` calls are a
-  high-severity finding, even when the SQL itself is safe.
+- All database access goes through `db/gateway.ts`. A direct `pg.query` call is a
+  high-severity finding even when the SQL itself is safe.
 - Money is always integer cents. A float touching a currency value is a bug.
 ```
 
-Rules are added to the per-role message, not the shared system prompt, so the
-cached prefix stays identical across reviewers. They are labelled as maintainer
-configuration to distinguish them from the source under review, which is data.
+Configuration is read from `.agentgate/config.env`, then a nearby `.env`, then
+`~/.config/agentgate/.env`. A variable set in your shell always wins.
 
-## Reviewing
+## Measuring it
 
-```bash
-agentgate local HEAD~1                  # local diff
-agentgate local --staged                # the index
-agentgate local --mode single           # one generalist, the baseline
-agentgate local --no-verify             # skip the gate (for measurement)
-agentgate pr owner/repo 123             # a GitHub PR — dry run
-agentgate pr owner/repo 123 --post      # ...and actually post, after confirming
-```
-
-`--post` is off by default and prompts before writing. Findings are posted as one
-batched review with inline comments, not N separate comments.
-
-## Evaluating
-
-The corpus is built by mutating real source from a real repository. Each mutation
-records the line it broke, so recall is mechanical ground truth rather than a
-hand-label that drifts. The clean half applies semantics-preserving edits, where
-every finding is by definition a false positive.
+The harness breaks real files from a real repository in known ways, and makes
+semantics-preserving changes to others. Recall is mechanical ground truth; every
+finding on an unchanged-behaviour file is a false positive.
 
 ```bash
-python -m evals.run_eval main --source ~/some-repo --dry-run     # inspect the corpus
-python -m evals.run_eval main --source ~/some-repo --n-defect 6 --n-clean 6
+python -m evals.run_eval main --source ~/some-repo --dry-run    # corpus only
 python -m evals.run_eval main --source ~/some-repo --arms all --repeats 3
-python -m evals.run_eval push --source ~/some-repo               # → LangSmith dataset
 ```
 
-The runner estimates model calls and wall-clock time before starting, and asks
-for confirmation past ~400 calls. On a free tier, start small: `--arms all` over
-40 cases is well over a thousand calls.
+Arms vary two switches — four specialists or one generalist, gate on or off — so
+each contribution can be read separately:
 
-Arms are `multi+verify`, `multi`, `single+verify`, `single`:
-
-| Comparison | What it shows |
+| comparison | what it shows |
 |---|---|
-| `multi` vs `single` | What four specialists find that one generalist doesn't |
-| `+verify` vs bare | What the gate removes, and what recall it costs |
+| `multi` vs `single` | what four specialists find that one generalist doesn't |
+| `+verify` vs bare | what the gate removes, and what recall it costs |
 
-Reported metrics: detection rate on seeded defects, false positives per clean
-diff, share of clean diffs reviewed in silence, gate rejection rate, and merge
-rate. `--repeats` gives the ± spread, which is the noise floor under every other
-number — a 4-point difference means nothing against ±5 points of run-to-run
-variance.
+Detection rate only means something next to the false-positive column: a reviewer
+that flags every line scores 100% on detection alone. `--repeats` reports the
+spread, which is the noise floor under every other number.
 
-Detection rate is only meaningful next to the clean-diff column — a reviewer that
-flags every line scores 100% on detection alone.
+The harness refuses to print results from a run that reviewed nothing, or that
+mixed two models — both have happened, and both looked like clean measurements.
 
-## Latency
+## Providers and tracing
 
-On a rate-limited tier, wall-clock is bound by call count, not by tokens or
-compute. One `multi+verify` review is roughly `1 warm + 4 reviewers + merges +
-verifications`, and at 10 req/min every call is 6 seconds of waiting before the
-model does anything.
+Runs on Google Gemini, Anthropic Claude, or a local model through Ollama, selected
+with `REVIEWER_PROVIDER`. A local model can also be configured as a fallback for
+when a hosted quota runs out; any review that used it says so, because a review
+answered by a smaller model is a different artefact.
 
-Three things keep that down:
+Set `LANGSMITH_TRACING=true` and a key and one review becomes one trace, with
+named spans per reviewer and a finding id on every verification.
 
-- **The rate limiter allows a burst** (`REVIEWER_BURST`, default 4). With a bucket
-  of 1 the four concurrent reviewers queue behind each other and the fan-out buys
-  nothing.
-- **Cache warming is skipped below `REVIEWER_WARM_MIN_TOKENS`** (default 4000).
-  It is a blocking call the fan-out waits on, so on a small review it costs a full
-  round-trip to save less than one.
-- **Verification is batched per file** (`REVIEWER_VERIFY_MODE=per_file`). One call
-  per file instead of one per finding, with the source sent once rather than once
-  per finding. Set `per_finding` to keep judgements strictly independent — the
-  eval harness can price the difference.
+See `.env.example` for the full set of settings.
 
-Knobs worth checking before blaming the design: `REVIEWER_RPM` should match your
-account's actual limit, `REVIEWER_THINKING_LOW/HIGH` control Gemini thinking
-budgets (0 is off, -1 is dynamic), and `REVIEWER_CHEAP_MODEL` can point the
-merger at Flash-Lite.
+## Development
 
-## Observability
+```bash
+uv venv --python 3.13 && uv pip install -e ".[dev]"
+pytest -q
+ruff check src evals tests
+```
 
-Set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` and one review becomes one
-trace. Spans are named and tagged so the trace answers questions worth asking:
-`specialist:security`, `verify:path:line`, with `finding_id` on every verify span
-so a bad verdict is traceable back to the claim that produced it.
+112 tests, no network — model calls are faked at the node boundary. The
+end-to-end tests run the real graph against fake models, which is what catches
+wiring bugs the unit tests miss.
 
-## Known weaknesses
+## What it will not do
 
-- **Reviewer and verifier are the same model family**, so collusion is a live
-  risk. The gate is prompted adversarially and given the full file rather than the
-  diff so it reasons from different evidence, but a rejection rate near 0% means
-  it has gone to sleep — watch that number.
-- **The clean corpus is synthetic.** Semantics-preserving mutations are not the
-  same distribution as real refactors. Mixing in real commits from your own
-  history is the fix, and is not implemented yet.
-- **Mutator coverage is uneven** across languages — the SQL and exception
-  mutators find few sites in a TypeScript tree. `by_mutator` in the report breaks
-  detection down per defect type so a skewed corpus is visible rather than hidden.
+- **Judge whether a change is a good idea.** It can tell you code is broken. It
+  cannot tell you the feature is wrong.
+- **Know anything outside the repository.** Environment settings, feature flags
+  and other services' expectations are not in the files it reads.
+- **Handle deeply tangled control flow.** Rare paths through complicated code are
+  where it is weakest, and where the expensive bugs live. True of every tool in
+  this category.
+- **Work across many repositories.** This is a single-repo tool.
