@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Literal
 
 from .graph import build_graph
-from .schema import Finding, ReviewRequest, ReviewResult, Verdict
+from .schema import Finding, Problem, ReviewRequest, ReviewResult, Verdict
 
 _GRAPH = None
 
@@ -31,6 +31,7 @@ def run_review(
             "verify": verify,
             "findings": [],
             "verdicts": [],
+            "problems": [],
         },
         config={
             "run_name": run_name or f"review:{request.ref}",
@@ -52,6 +53,7 @@ def run_review(
     merged: list[Finding] = final.get("merged") or []
     verdicts: list[Verdict] = final.get("verdicts") or []
     accepted: list[Finding] = final.get("accepted") or []
+    problems: list[Problem] = final.get("problems") or []
 
     confirmed = sum(1 for v in verdicts if v.status == "CONFIRMED")
     return ReviewResult(
@@ -62,6 +64,7 @@ def run_review(
         merged=merged,
         accepted=accepted,
         verdicts=verdicts,
+        problems=problems,
         usage={
             "raw_count": len(raw),
             "merged_count": len(merged),
@@ -69,5 +72,8 @@ def run_review(
             "merge_rate": 1 - (len(merged) / len(raw)) if raw else 0.0,
             "rejection_rate": 1 - (confirmed / len(verdicts)) if verdicts else 0.0,
             "dropped_files": len(final.get("dropped") or []),
+            # How many files the reviewers were actually shown. Zero means the
+            # review never happened, which must not be reported as "found nothing".
+            "contexts": len(final.get("contexts") or {}),
         },
     )

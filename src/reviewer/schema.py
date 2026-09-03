@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .filters import is_reviewable_path
+
 Category = Literal["security", "correctness", "performance", "maintainability"]
 Severity = Literal["high", "medium", "low"]
 Role = Literal["security", "correctness", "performance", "maintainability", "generalist"]
@@ -67,7 +69,20 @@ class ReviewRequest(BaseModel):
 
     @property
     def reviewable(self) -> list[FileDiff]:
-        return [f for f in self.files if not f.is_binary and f.change_type != "deleted"]
+        return [
+            f
+            for f in self.files
+            if not f.is_binary
+            and f.change_type != "deleted"
+            and is_reviewable_path(f.path)
+        ]
+
+    @property
+    def skipped(self) -> list[str]:
+        """Paths present in the diff that no reviewer will see. Reported rather
+        than silently dropped."""
+        reviewed = {f.path for f in self.reviewable}
+        return [f.path for f in self.files if f.path not in reviewed]
 
 
 class FileContext(BaseModel):
@@ -83,6 +98,24 @@ class FileContext(BaseModel):
 # ─── Output ─────────────────────────────────────────────────────────────────
 
 
+class FixSuggestion(BaseModel):
+    """A replacement, not a description of one.
+
+    "Change <= to < in the loop bound" is prose a person still has to apply.
+    Exact replacement text can be rendered as a GitHub suggestion block, which is
+    one click to accept — and is checkable, because a replacement identical to
+    what is already there is a no-op and can be dropped mechanically.
+    """
+
+    start_line: int = Field(description="First line being replaced, in the post-change file.")
+    end_line: int = Field(description="Last line being replaced. Same as start_line for one line.")
+    replacement: str = Field(
+        description="The exact replacement source. Real indentation, no line-number "
+        "prefixes, no ``` fences, no commentary. It is pasted in verbatim."
+    )
+    note: str | None = Field(default=None, description="One short sentence on why.")
+
+
 class RawFinding(BaseModel):
     """What a reviewer must produce. `failure_scenario` is required on purpose:
     it is the field that makes a vague observation impossible to file."""
@@ -96,7 +129,11 @@ class RawFinding(BaseModel):
         description="Concrete inputs or state that lead to a wrong result or crash. "
         "If you cannot write one, do not report the finding."
     )
-    suggested_fix: str | None = None
+    fix: FixSuggestion | None = Field(
+        default=None,
+        description="Only when you can write the corrected code exactly. Omit it "
+        "rather than guess — a wrong fix is worse than none.",
+    )
     confidence: float = Field(
         ge=0.0, le=1.0, description="0-1. Calibration is measured, not trusted."
     )
@@ -134,6 +171,36 @@ class VerdictDecision(BaseModel):
     )
 
 
+class IndexedVerdict(BaseModel):
+    """One decision inside a batch. `index` refers to the numbered finding list
+    the verifier was shown."""
+
+    index: int
+    status: Literal["CONFIRMED", "REJECTED"]
+    reasoning: str = Field(
+        description="Why the defect is or is not real, citing the source you were given."
+    )
+    corrected_line: int | None = Field(
+        default=None, description="Set only if the defect is real but reported at the wrong line."
+    )
+
+
+class VerdictBatch(BaseModel):
+    verdicts: list[IndexedVerdict] = Field(default_factory=list)
+
+
+class Problem(BaseModel):
+    """Something that went wrong but did not stop the review.
+
+    These used to be caught, logged into a void, and forgotten — so a review that
+    silently lost half its findings looked exactly like a clean one. Collecting
+    them means the run can say what it could not do."""
+
+    stage: str
+    detail: str
+    severity: Literal["warning", "error"] = "warning"
+
+
 class ReviewResult(BaseModel):
     request_ref: str
     mode: Literal["single", "multi"]
@@ -142,6 +209,7 @@ class ReviewResult(BaseModel):
     merged: list[Finding] = Field(default_factory=list)
     accepted: list[Finding] = Field(default_factory=list)
     verdicts: list[Verdict] = Field(default_factory=list)
+    problems: list[Problem] = Field(default_factory=list)
     usage: dict[str, float] = Field(default_factory=dict)
 
 
@@ -153,3 +221,25 @@ class MergedFinding(RawFinding):
 
 class MergeResult(BaseModel):
     findings: list[MergedFinding] = Field(default_factory=list)
+
+
+def validate_fix(finding: Finding, source: str) -> Finding:
+    """Drop a fix that cannot be applied, keeping the finding.
+
+    Three mechanical checks, no model call: the range has to exist in the file,
+    it has to contain the line the finding is anchored to, and the replacement has
+    to actually differ from what is there. A no-op suggestion renders as a live
+    "apply" button that changes nothing, which is worse than showing no button.
+    """
+    fix = finding.fix
+    if fix is None:
+        return finding
+
+    lines = source.splitlines()
+    ok = (
+        1 <= fix.start_line <= fix.end_line <= len(lines)
+        and fix.start_line <= finding.line <= fix.end_line
+        and fix.replacement.strip()
+        and fix.replacement.rstrip() != "\n".join(lines[fix.start_line - 1 : fix.end_line]).rstrip()
+    )
+    return finding if ok else finding.model_copy(update={"fix": None})

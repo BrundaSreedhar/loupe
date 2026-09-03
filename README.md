@@ -128,6 +128,31 @@ variance.
 Detection rate is only meaningful next to the clean-diff column — a reviewer that
 flags every line scores 100% on detection alone.
 
+## Latency
+
+On a rate-limited tier, wall-clock is bound by call count, not by tokens or
+compute. One `multi+verify` review is roughly `1 warm + 4 reviewers + merges +
+verifications`, and at 10 req/min every call is 6 seconds of waiting before the
+model does anything.
+
+Three things keep that down:
+
+- **The rate limiter allows a burst** (`REVIEWER_BURST`, default 4). With a bucket
+  of 1 the four concurrent reviewers queue behind each other and the fan-out buys
+  nothing.
+- **Cache warming is skipped below `REVIEWER_WARM_MIN_TOKENS`** (default 4000).
+  It is a blocking call the fan-out waits on, so on a small review it costs a full
+  round-trip to save less than one.
+- **Verification is batched per file** (`REVIEWER_VERIFY_MODE=per_file`). One call
+  per file instead of one per finding, with the source sent once rather than once
+  per finding. Set `per_finding` to keep judgements strictly independent — the
+  eval harness can price the difference.
+
+Knobs worth checking before blaming the design: `REVIEWER_RPM` should match your
+account's actual limit, `REVIEWER_THINKING_LOW/HIGH` control Gemini thinking
+budgets (0 is off, -1 is dynamic), and `REVIEWER_CHEAP_MODEL` can point the
+merger at Flash-Lite.
+
 ## Observability
 
 Set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` and one review becomes one

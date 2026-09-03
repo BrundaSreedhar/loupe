@@ -13,15 +13,15 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
+from reviewer.filters import is_reviewable_path
 from reviewer.schema import FileDiff, Hunk, ReviewRequest
 
 from .mutations import Mutation, all_benign_mutators, all_defect_mutators
 
-SOURCE_SUFFIXES = {".py", ".ts", ".tsx", ".js", ".jsx"}
-SKIP_PARTS = {
-    "node_modules", ".venv", "venv", "dist", "build", ".next", "__pycache__",
-    ".git", "vendor", "migrations", "coverage",
-}
+# Deliberately no local skip list: the corpus uses the reviewer's own filter, so
+# a file can never be seeded with a defect that the reviewer would then refuse to
+# look at. Keeping two lists in sync is what produced a corpus made entirely of
+# numpy and onnxruntime source, scored as 0% detection.
 
 
 @dataclass
@@ -35,11 +35,12 @@ class Case:
 def eligible_files(root: Path, min_lines: int = 40, max_lines: int = 400) -> list[Path]:
     out: list[Path] = []
     for p in root.rglob("*"):
-        if p.suffix not in SOURCE_SUFFIXES or not p.is_file():
+        if not p.is_file():
             continue
-        if SKIP_PARTS & set(p.parts):
+        rel = p.relative_to(root).as_posix()
+        if not is_reviewable_path(rel):
             continue
-        if p.name.endswith((".test.ts", ".spec.ts", "_test.py", ".d.ts")):
+        if p.name.endswith((".test.ts", ".spec.ts", "_test.py")):
             continue
         try:
             n = len(p.read_text(encoding="utf-8").splitlines())
@@ -115,11 +116,17 @@ def build(
             if mutated == original:
                 continue
             rel = str(path.relative_to(source_root))
+            request = build_request(rel, original, mutated, f"{kind}/{name}/{rel}")
+            if not request.reviewable:
+                # Belt and braces: a case the reviewer will not look at cannot be
+                # scored, and silently keeping it reports 0% detection instead of
+                # a broken corpus.
+                continue
             cases.append(
                 Case(
                     id=f"{kind}-{made:03d}-{name}",
                     kind=kind,
-                    request=build_request(rel, original, mutated, f"{kind}/{name}/{rel}"),
+                    request=request,
                     truth=mutation if kind == "defect" else None,
                 )
             )

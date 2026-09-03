@@ -27,6 +27,7 @@ class CaseScore:
     merged: int
     accepted: int
     rejection_rate: float
+    contexts: int = 0
     mutator: str = ""
 
 
@@ -66,6 +67,15 @@ class Report:
         vals = [s.rejection_rate for s in self.scores if s.merged]
         return mean(vals) if vals else 0.0
 
+    @property
+    def reviewed(self) -> int:
+        """Cases where the reviewers were actually shown something.
+
+        Without this, a pipeline that shows the reviewer nothing scores a
+        confident 0% detection and 0.00 false positives — which reads like a
+        cautious reviewer and is in fact a broken one."""
+        return sum(1 for s in self.scores if s.contexts > 0)
+
     def by_mutator(self) -> dict[str, float]:
         buckets: dict[str, list[bool]] = {}
         for s in self._d():
@@ -81,6 +91,8 @@ class Report:
             "rejection_rate": self.rejection_rate,
             "n_defect": len(self._d()),
             "n_clean": len(self._c()),
+            "reviewed": self.reviewed,
+            "scored": len(self.scores),
         }
 
 
@@ -109,6 +121,7 @@ def score_case(case: Case, result: ReviewResult) -> CaseScore:
         merged=int(result.usage.get("merged_count", 0)),
         accepted=len(accepted),
         rejection_rate=result.usage.get("rejection_rate", 0.0),
+        contexts=int(result.usage.get("contexts", 0)),
         mutator=case.truth.name if case.truth else "",
     )
 

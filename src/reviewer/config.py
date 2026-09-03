@@ -61,6 +61,14 @@ MERGE_LINE_WINDOW = int(os.getenv("REVIEWER_MERGE_LINE_WINDOW", "3"))
 
 SPECIALIST_ROLES = ("security", "correctness", "performance", "maintainability")
 
+# What to do when a credential is found in the diff.
+#   redact — blank the value, review the rest (default: the secret never leaves,
+#            and you still get a review)
+#   block  — refuse the whole review
+#   warn   — report it and send anyway. Never a good idea on a free tier whose
+#            terms permit training on inputs.
+ON_SECRET = os.getenv("REVIEWER_ON_SECRET", "redact").lower()
+
 
 def credentials_present() -> bool:
     if PROVIDER == "anthropic":
@@ -72,13 +80,27 @@ def key_env_var() -> str:
     return _KEY_ENV[PROVIDER]
 
 
+# Burst allowance. The fan-out is genuinely concurrent, so a bucket of 1 turns
+# four parallel reviewers into four serial ones spaced 60/RPM apart — the average
+# rate is respected either way, but the latency is four times worse for nothing.
+BURST = int(os.getenv("REVIEWER_BURST", str(len(SPECIALIST_ROLES))))
+
+# Warming a prefix costs one blocking call before the fan-out can start. Below
+# this size the cache saves less than the extra round-trip costs.
+WARM_MIN_TOKENS = int(os.getenv("REVIEWER_WARM_MIN_TOKENS", "4000"))
+
+# "per_file" verifies all of a file's findings in one call, "per_finding" uses one
+# call each. Per-file is far cheaper; per-finding keeps the judgements independent.
+VERIFY_MODE = os.getenv("REVIEWER_VERIFY_MODE", "per_file")
+
+
 @cache
 def _rate_limiter() -> InMemoryRateLimiter | None:
     if RPM <= 0:
         return None
-    # max_bucket_size 1 means no burst: the fan-out cannot fire four calls at once
-    # and immediately spend a minute's quota.
-    return InMemoryRateLimiter(requests_per_second=RPM / 60, max_bucket_size=1)
+    return InMemoryRateLimiter(
+        requests_per_second=RPM / 60, max_bucket_size=max(BURST, 1)
+    )
 
 
 def _llm(effort: str, max_tokens: int = 16000, cheap: bool = False) -> BaseChatModel:

@@ -11,6 +11,7 @@ from .adapters import github_pr, local_git
 from .adapters.local_git import GitError
 from .config import MODEL, PROVIDER, RPM, credentials_present, key_env_var
 from .emit import post_to_github, render
+from .logs import setup_logging
 from .runner import run_review
 
 app = typer.Typer(add_completion=False, help="Multi-agent code reviewer.")
@@ -29,7 +30,11 @@ def _preflight() -> None:
         raise typer.Exit(1)
 
 Mode = typer.Option("multi", help="'multi' runs the four-specialist panel; 'single' the baseline.")
-NoVerify = typer.Option(False, "--no-verify", help="Skip the precision gate. For measurement.")
+NoVerify = typer.Option(False, "--no-verify", help="Skip the checking pass. For measurement.")
+Verbose = typer.Option(
+    0, "--verbose", "-v", count=True,
+    help="-v shows what each stage did; -vv adds debug; -vvv adds HTTP traffic.",
+)
 
 
 @app.command()
@@ -39,8 +44,10 @@ def local(
     repo_root: str = typer.Option(".", "--repo-root"),
     mode: str = Mode,
     no_verify: bool = NoVerify,
+    verbose: int = Verbose,
 ) -> None:
     """Review a local diff."""
+    setup_logging(verbose)
     _preflight()
     try:
         request = local_git.load(ref=ref, repo_root=repo_root, staged=staged)
@@ -55,8 +62,11 @@ def local(
         f"[dim]Reviewing {len(request.reviewable)} file(s) · mode={mode} · "
         f"{PROVIDER}/{MODEL}[/dim]"
     )
-    with console.status("Reviewing…"):
+    if verbose:
         result = run_review(request, mode=mode, verify=not no_verify)
+    else:
+        with console.status("Reviewing…"):
+            result = run_review(request, mode=mode, verify=not no_verify)
     render(result, request, console)
 
 
@@ -69,8 +79,10 @@ def pr(
     post: bool = typer.Option(
         False, "--post", help="Post findings to the PR. Off by default — this writes to GitHub."
     ),
+    verbose: int = Verbose,
 ) -> None:
     """Review a GitHub pull request."""
+    setup_logging(verbose)
     _preflight()
     request = github_pr.load(repo, number)
     if not request.reviewable:
@@ -78,8 +90,13 @@ def pr(
         raise typer.Exit(0)
 
     console.print(f"[dim]Reviewing {repo}#{number} · {len(request.reviewable)} file(s)[/dim]")
-    with console.status("Reviewing…"):
+    if verbose:
         result = run_review(request, mode=mode, verify=not no_verify, run_name=f"{repo}#{number}")
+    else:
+        with console.status("Reviewing…"):
+            result = run_review(
+                request, mode=mode, verify=not no_verify, run_name=f"{repo}#{number}"
+            )
     render(result, request, console)
 
     if not post:

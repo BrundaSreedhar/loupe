@@ -10,6 +10,7 @@ import os
 
 import httpx
 from rich.console import Console
+from rich.padding import Padding
 from rich.panel import Panel
 from rich.text import Text
 
@@ -18,16 +19,39 @@ from .schema import ReviewRequest, ReviewResult
 _SEVERITY_STYLE = {"high": "bold red", "medium": "yellow", "low": "cyan"}
 
 
+def render_problems(result: ReviewResult, console: Console) -> None:
+    """Things that went wrong but did not stop the review.
+
+    Shown even when there are no findings, because "no findings" and "no findings
+    because three stages failed" must not look the same."""
+    if not result.problems:
+        return
+    console.print()
+    console.print("  [bold]Problems during this review[/bold]")
+    for p in result.problems:
+        marker = "[red]![/red]" if p.severity == "error" else "[yellow]·[/yellow]"
+        line = Text.from_markup(f"{marker} [dim]{p.stage}[/dim]  ")
+        line.append(p.detail)
+        # Padding keeps wrapped continuation lines under the text, not at column 0.
+        console.print(Padding(line, (0, 0, 0, 4)))
+
+
 def render(result: ReviewResult, request: ReviewRequest, console: Console | None = None) -> None:
     console = console or Console()
 
     if not result.accepted:
         console.print()
-        console.print("  [green]No findings.[/green]  ", end="")
-        console.print(
-            f"[dim]{result.usage.get('raw_count', 0):.0f} raw → "
-            f"{result.usage.get('merged_count', 0):.0f} merged → 0 confirmed[/dim]"
-        )
+        errors = [p for p in result.problems if p.severity == "error"]
+        if errors:
+            console.print("  [yellow]No findings reported, but this review did not "
+                          "complete cleanly.[/yellow]")
+        else:
+            console.print("  [green]No findings.[/green]  ", end="")
+            console.print(
+                f"[dim]{result.usage.get('raw_count', 0):.0f} raw → "
+                f"{result.usage.get('merged_count', 0):.0f} merged → 0 confirmed[/dim]"
+            )
+        render_problems(result, console)
         console.print()
         return
 
@@ -48,9 +72,17 @@ def render(result: ReviewResult, request: ReviewRequest, console: Console | None
             body.append(f.summary + "\n\n", style="bold")
             body.append("Fails when: ", style="dim")
             body.append(f.failure_scenario)
-            if f.suggested_fix:
-                body.append("\n\nFix: ", style="dim")
-                body.append(f.suggested_fix)
+            if f.fix:
+                if f.fix.note:
+                    body.append("\n\nFix: ", style="dim")
+                    body.append(f.fix.note)
+                span = (
+                    f"line {f.fix.start_line}"
+                    if f.fix.start_line == f.fix.end_line
+                    else f"lines {f.fix.start_line}-{f.fix.end_line}"
+                )
+                body.append(f"\n\nReplace {span} with:\n", style="dim")
+                body.append(f.fix.replacement, style="green")
             console.print(Panel(body, title=head, title_align="left", border_style="dim"))
         console.print()
 
@@ -66,6 +98,7 @@ def render(result: ReviewResult, request: ReviewRequest, console: Console | None
         )
         + "[/dim]"
     )
+    render_problems(result, console)
     console.print()
 
 
@@ -76,9 +109,22 @@ def to_review_comments(result: ReviewResult) -> list[dict]:
             f"**{f.severity} · {f.category}** — {f.summary}\n\n"
             f"**Fails when:** {f.failure_scenario}"
         )
-        if f.suggested_fix:
-            body += f"\n\n**Suggested fix:** {f.suggested_fix}"
-        comments.append({"path": f.file, "line": f.line, "side": "RIGHT", "body": body})
+        comment: dict = {"path": f.file, "line": f.line, "side": "RIGHT"}
+
+        if f.fix:
+            if f.fix.note:
+                body += f"\n\n{f.fix.note}"
+            # A ```suggestion block renders in the PR as a one-click apply. GitHub
+            # applies it to exactly the lines the comment spans, so the comment has
+            # to be anchored to the fix's range, not to the finding's single line.
+            body += f"\n\n```suggestion\n{f.fix.replacement.rstrip()}\n```"
+            comment["line"] = f.fix.end_line
+            if f.fix.end_line != f.fix.start_line:
+                comment["start_line"] = f.fix.start_line
+                comment["start_side"] = "RIGHT"
+
+        comment["body"] = body
+        comments.append(comment)
     return comments
 
 

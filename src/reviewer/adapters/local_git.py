@@ -23,11 +23,45 @@ def _git(args: list[str], cwd: str) -> str:
 
 
 def _resolves(ref: str, cwd: str) -> bool:
+    """Tree-ish, not commit. `git diff` accepts any tree-ish, and the empty-tree
+    hash used to review an initial commit is a tree with no commit behind it —
+    checking for `^{commit}` would reject the very ref we suggest."""
     try:
-        _git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], cwd)
+        _git(["rev-parse", "--verify", "--quiet", f"{ref}^{{tree}}"], cwd)
     except GitError:
         return False
     return True
+
+
+def _commit_count(cwd: str) -> int:
+    try:
+        return int(_git(["rev-list", "--count", "HEAD"], cwd).strip())
+    except (GitError, ValueError):
+        return 0
+
+
+def _empty_tree(cwd: str) -> str:
+    """The hash of git's empty tree — diffing against it yields the whole of the
+    first commit, which is the only way to review a repository's initial import."""
+    return _git(["hash-object", "-t", "tree", "/dev/null"], cwd).strip()
+
+
+def _suggest(ref: str, root: str) -> str:
+    """A ref failing on a young repository is nearly always the ~N walking off the
+    end of history, which the bare git error does not say."""
+    n = _commit_count(root)
+    if not (ref.startswith("HEAD~") and n):
+        return ""
+    return (
+        f"\nThis repository has only {n} commit{'s' if n != 1 else ''}, "
+        f"so there is no {ref} to diff against.\n\n"
+        "Try one of:\n"
+        "  review local HEAD                       review uncommitted changes\n"
+        "  review local --staged                   review what is staged\n"
+        "  review local HEAD~1 --repo-root ~/repo  review a repo with history\n"
+        f"  review local {_empty_tree(root)}\n"
+        "                                          review the first commit whole"
+    )
 
 
 def load(ref: str = "HEAD~1", repo_root: str = ".", staged: bool = False) -> ReviewRequest:
@@ -40,7 +74,7 @@ def load(ref: str = "HEAD~1", repo_root: str = ".", staged: bool = False) -> Rev
                 f"{root} has no commits yet, so there is nothing to diff against. "
                 "Stage some changes and use `--staged`, or make a commit first."
             )
-        raise GitError(f"Cannot resolve ref {ref!r} in {root}.")
+        raise GitError(f"Cannot resolve ref {ref!r} in {root}.{_suggest(ref, root)}")
     if staged and not has_head:
         raise GitError(
             f"{root} has no commits yet, so there is no HEAD for the index to be "

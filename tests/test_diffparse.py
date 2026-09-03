@@ -92,3 +92,49 @@ def test_empty_repo_says_so(tmp_path):
         with pytest.raises(GitError) as exc:
             load(ref="HEAD~1", repo_root=str(tmp_path), staged=staged)
         assert "no commits" in str(exc.value)
+
+
+def _init_repo(path, files: dict[str, str], message: str = "init") -> None:
+    import subprocess
+
+    for cmd in (
+        ["git", "init", "-q", "-b", "main"],
+        ["git", "config", "user.email", "t@t"],
+        ["git", "config", "user.name", "t"],
+    ):
+        subprocess.run(cmd, cwd=path, check=True, capture_output=True)
+    for name, body in files.items():
+        (path / name).write_text(body)
+    subprocess.run(["git", "add", "-A"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", message], cwd=path, check=True, capture_output=True)
+
+
+def test_single_commit_repo_explains_itself(tmp_path):
+    """A one-commit repo has a HEAD, so the 'no commits' branch does not fire —
+    the message must still say why HEAD~1 is unavailable."""
+    from reviewer.adapters.local_git import GitError, load
+
+    _init_repo(tmp_path, {"a.py": "x = 1\n"})
+    with pytest.raises(GitError) as exc:
+        load(ref="HEAD~1", repo_root=str(tmp_path))
+    msg = str(exc.value)
+    assert "only 1 commit" in msg
+    assert "--repo-root" in msg
+
+
+def test_empty_tree_ref_reviews_the_first_commit(tmp_path):
+    """The empty-tree hash is suggested in that message, so it has to work — it is
+    a tree with no commit behind it, which a `^{commit}` check would reject."""
+    import subprocess
+
+    from reviewer.adapters.local_git import load
+
+    _init_repo(tmp_path, {"a.py": "x = 1\ny = 2\n"})
+    empty = subprocess.run(
+        ["git", "hash-object", "-t", "tree", "/dev/null"],
+        cwd=tmp_path, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+    request = load(ref=empty, repo_root=str(tmp_path))
+    assert [f.path for f in request.reviewable] == ["a.py"]
+    assert request.files[0].content_after == "x = 1\ny = 2\n"

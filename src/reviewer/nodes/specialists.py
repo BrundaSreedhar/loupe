@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..config import specialist_llm
 from ..prompts.specialists import SHARED_SYSTEM, context_message, role_message
-from ..schema import Finding, FindingBatch
+from ..schema import Finding, FindingBatch, Problem, validate_fix
 from ..state import SpecialistTask
 from ._common import cached_block, drop_ungrounded
 
@@ -40,7 +40,20 @@ def specialist(task: SpecialistTask) -> dict:
         Finding(id=f"{role[:4]}-{uuid4().hex[:8]}", produced_by=role, **raw.model_dump())
         for raw in batch.findings
     ]
+    sources = {
+        f.path: f.content_after for f in task["request"].files if f.content_after is not None
+    }
+    findings = [validate_fix(f, sources.get(f.file, "")) for f in findings]
     kept, dropped = drop_ungrounded(findings, contexts)
+    log.info("%s reviewer: %d finding(s)%s", role, len(kept),
+             f", {len(dropped)} dropped as ungrounded" if dropped else "")
+    problems = []
     if dropped:
-        log.info("%s reviewer: dropped %d ungrounded finding(s): %s", role, len(dropped), dropped)
-    return {"findings": kept}
+        log.warning("%s reviewer: dropped %d finding(s) pointing at code it was "
+                    "not shown: %s", role, len(dropped), "; ".join(dropped[:3]))
+        problems.append(Problem(
+            stage=f"specialist:{role}",
+            detail=f"{len(dropped)} finding(s) discarded — they referenced files or "
+                   f"lines outside the review context",
+        ))
+    return {"findings": kept, "problems": problems}

@@ -8,14 +8,18 @@ that are actually near each other.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..config import MERGE_LINE_WINDOW, merger_llm
 from ..prompts.merge import SYSTEM, user_prompt
-from ..schema import Finding, MergeResult
+from ..quota import raise_if_terminal
+from ..schema import Finding, MergeResult, Problem
 from ..state import ReviewState
+
+log = logging.getLogger(__name__)
 
 
 def group_by_locality(findings: list[Finding]) -> list[list[Finding]]:
@@ -44,6 +48,7 @@ def dedupe(state: ReviewState) -> dict:
 
     llm = merger_llm().with_structured_output(MergeResult, method="json_schema")
     merged: list[Finding] = []
+    problems: list[Problem] = []
 
     for group in group_by_locality(findings):
         if len(group) == 1:
@@ -58,8 +63,16 @@ def dedupe(state: ReviewState) -> dict:
                     "metadata": {"group_size": len(group)},
                 },
             )
-        except Exception:  # noqa: BLE001 — a failed merge must not lose
-            # findings; keep them all, unmerged.
+        except Exception as exc:  # noqa: BLE001 — a failed merge must not lose
+            # findings; keep them all, unmerged. A quota failure still propagates.
+            raise_if_terminal(exc)
+            log.warning("merge failed at %s:%d (%s); keeping %d finding(s) unmerged",
+                        group[0].file, group[0].line, type(exc).__name__, len(group))
+            problems.append(Problem(
+                stage="dedupe",
+                detail=f"could not merge {len(group)} finding(s) at {group[0].file}:"
+                       f"{group[0].line} — they may appear as duplicates",
+            ))
             merged.extend(group)
             continue
 
@@ -75,4 +88,5 @@ def dedupe(state: ReviewState) -> dict:
                 )
             )
 
-    return {"merged": merged}
+    log.info("dedupe: %d finding(s) -> %d", len(findings), len(merged))
+    return {"merged": merged, "problems": problems}

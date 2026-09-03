@@ -20,6 +20,7 @@ from rich.console import Console
 from rich.table import Table
 
 from reviewer.config import MODEL, PROVIDER, RPM
+from reviewer.quota import DailyQuotaExhausted
 from reviewer.runner import run_review
 from reviewer.schema import ReviewRequest
 
@@ -68,12 +69,51 @@ def run_arm(cases: list[Case], mode: str, verify: bool, workers: int) -> Report:
             case = futures[fut]
             try:
                 result = fut.result()
+            except DailyQuotaExhausted as exc:
+                console.print(
+                    f"[red]Out of quota:[/red] {exc}\n"
+                    "Stopping. The remaining cases would fail identically, and "
+                    "grinding through them turns a 2-minute failure into 20."
+                )
+                for pending in futures:
+                    pending.cancel()
+                break
             except Exception as exc:  # noqa: BLE001 — one bad case must not
                 # abort an eval run that costs real money.
                 console.print(f"[red]{case.id} failed:[/red] {type(exc).__name__}: {exc}")
                 continue
             report.scores.append(score_case(case, result))
     return report
+
+
+def check_did_work(results: dict[str, list[Report]]) -> bool:
+    """Refuse to present numbers from a run that never reviewed anything."""
+    ok = True
+    for arm, reps in results.items():
+        for i, r in enumerate(reps, start=1):
+            if not r.scores:
+                # The loudest failure of all, and the one the first version of
+                # this guard skipped: every case raised, so there is nothing to
+                # score, and every rate below is 0/0 rendered as a confident 0%.
+                console.print(
+                    f"[red]{arm} run {i}: every case failed — no result was "
+                    "produced at all.[/red] Common cause: the daily quota is "
+                    "exhausted. Re-run `review doctor` and check your limits."
+                )
+                ok = False
+            elif r.reviewed == 0:
+                console.print(
+                    f"[red]{arm} run {i}: none of the {len(r.scores)} cases were "
+                    "actually reviewed — every file was filtered out before any "
+                    "model call.[/red] The numbers below are not a measurement."
+                )
+                ok = False
+            elif r.scores and r.reviewed < len(r.scores):
+                console.print(
+                    f"[yellow]{arm} run {i}: {len(r.scores) - r.reviewed} of "
+                    f"{len(r.scores)} cases were never shown to a reviewer.[/yellow]"
+                )
+    return ok
 
 
 def render_comparison(results: dict[str, list[Report]]) -> None:
@@ -170,6 +210,8 @@ def main(
             reps.append(run_arm(cases, mode, verify, workers))
         results[arm] = reps
 
+    if not check_did_work(results):
+        raise typer.Exit(1)
     render_comparison(results)
 
     out.mkdir(parents=True, exist_ok=True)

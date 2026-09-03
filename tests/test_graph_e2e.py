@@ -9,10 +9,19 @@ reviewer. No network, no key, no spend.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from evals.corpus import build_request
-from reviewer.schema import FindingBatch, MergedFinding, MergeResult, RawFinding, VerdictDecision
+from reviewer.schema import (
+    FindingBatch,
+    IndexedVerdict,
+    MergedFinding,
+    MergeResult,
+    RawFinding,
+    VerdictBatch,
+)
 
 ORIGINAL = "\n".join(f"value_{i} = compute({i})" for i in range(1, 31)) + "\n"
 MUTATED = ORIGINAL.replace("value_4 = compute(4)", "value_4 = compute(5)").replace(
@@ -84,12 +93,23 @@ def wired(monkeypatch):
         )
 
     def verify_payload(messages, config):
-        fid = (config.get("metadata") or {}).get("finding_id", "")
-        # Confirm the line-4 defect, reject the line-20 one. run_name is
-        # "verify:<file>:<line>", which is unambiguous where prose is not.
-        line = int(str(config.get("run_name", "verify:x:0")).rsplit(":", 1)[-1])
-        status = "CONFIRMED" if line == 4 else "REJECTED"
-        return VerdictDecision(status=status, reasoning=f"verdict for {fid}")
+        # Verification is batched per file, so one call may carry several findings.
+        # The prompt numbers them "[i] line N"; confirm line 4, reject the rest.
+        text = str(messages[-1].content)
+        out = []
+        for row in text.splitlines():
+            m = re.match(r"\[(\d+)\] line (\d+)", row.strip())
+            if not m:
+                continue
+            idx, line = int(m.group(1)), int(m.group(2))
+            out.append(
+                IndexedVerdict(
+                    index=idx,
+                    status="CONFIRMED" if line == 4 else "REJECTED",
+                    reasoning=f"verdict for line {line}",
+                )
+            )
+        return VerdictBatch(verdicts=out)
 
     spec = _FakeLLM(specialist_payload)
     merge = _FakeLLM(merge_payload)
@@ -142,17 +162,21 @@ def test_gate_removes_rejected_findings(wired, request_fixture):
 
     result = run_review(request_fixture, mode="multi", verify=True)
     assert result.verdicts, "the gate never ran"
+    # Assert something survived as well as something being removed: if the gate
+    # errors, everything is rejected and an `all(...)` over an empty list passes.
+    assert result.accepted, "the gate rejected everything — is it erroring?"
     assert all(f.line == 4 for f in result.accepted), "a rejected finding survived the gate"
-    assert result.usage["rejection_rate"] > 0
+    assert 0 < result.usage["rejection_rate"] < 1
 
 
-def test_verify_spans_carry_finding_id(wired, request_fixture):
-    """Without finding_id the verify fan-out is N anonymous sibling spans."""
+def test_verify_spans_carry_finding_ids(wired, request_fixture):
+    """Without them the verify fan-out is a set of anonymous sibling spans."""
     _, _, verify = wired
     from reviewer.runner import run_review
 
     run_review(request_fixture, mode="multi", verify=True)
-    assert all("finding_id" in (c["config"].get("metadata") or {}) for c in verify.calls)
+    assert verify.calls
+    assert all((c["config"].get("metadata") or {}).get("finding_ids") for c in verify.calls)
 
 
 def test_warm_cache_skipped_in_single_mode(wired, request_fixture):
@@ -163,10 +187,26 @@ def test_warm_cache_skipped_in_single_mode(wired, request_fixture):
     assert not any(c["config"].get("run_name") == "warm_cache" for c in spec.calls)
 
 
-def test_warm_cache_runs_once_in_multi_mode(wired, request_fixture):
+def _warms(spec) -> list:
+    return [c for c in spec.calls if c["config"].get("run_name") == "warm_cache"]
+
+
+def test_warm_cache_skipped_when_prefix_is_too_small(wired, request_fixture):
+    """Warming is a blocking call the fan-out waits on. On a small prefix it costs
+    a round-trip to save less than one."""
     spec, _, _ = wired
     from reviewer.runner import run_review
 
     run_review(request_fixture, mode="multi", verify=False)
-    warms = [c for c in spec.calls if c["config"].get("run_name") == "warm_cache"]
-    assert len(warms) == 1
+    assert _warms(spec) == []
+
+
+def test_warm_cache_runs_once_when_prefix_is_large(wired, request_fixture, monkeypatch):
+    spec, _, _ = wired
+    import reviewer.nodes.prepare as prepare_mod
+
+    monkeypatch.setattr(prepare_mod, "WARM_MIN_TOKENS", 0)
+    from reviewer.runner import run_review
+
+    run_review(request_fixture, mode="multi", verify=False)
+    assert len(_warms(spec)) == 1
