@@ -13,6 +13,7 @@ from typing import Annotated, Literal, NotRequired
 
 from typing_extensions import TypedDict
 
+from .index import Reference
 from .lint import LintIssue
 from .safety import SafetyIssue
 from .schema import FileContext, Finding, Problem, ReviewRequest, Verdict
@@ -24,9 +25,15 @@ class ReviewState(TypedDict):
     dropped: NotRequired[list[str]]
     lint_issues: NotRequired[list[LintIssue]]
     safety: NotRequired[list[SafetyIssue]]
+    # Definitions the changed lines call, resolved from the repository on disk.
+    # Part of the shared prompt prefix, so every reviewer sees the same list.
+    references: NotRequired[list[Reference]]
 
     mode: Literal["single", "multi"]
     verify: bool
+    # None defers to LOUPE_LINT. False is for callers whose diff exists only in
+    # memory: a linter reads the file on disk, which is not the file under review.
+    lint: NotRequired[bool | None]
 
     findings: Annotated[list[Finding], operator.add]
     merged: NotRequired[list[Finding]]
@@ -49,6 +56,7 @@ class SpecialistTask(TypedDict):
     request: ReviewRequest
     contexts: dict[str, FileContext]
     lint_issues: list[LintIssue]
+    references: list[Reference]
 
 
 class ConsensusTask(TypedDict):

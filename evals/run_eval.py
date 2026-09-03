@@ -19,7 +19,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from loupe.config import MODEL, PROVIDER, RPM
+from loupe.config import GROUNDING, INDEX, MODEL, PROVIDER, RPM
 from loupe.quota import DailyQuotaExhausted
 from loupe.runner import run_review
 from loupe.schema import ReviewRequest
@@ -64,6 +64,10 @@ def run_arm(cases: list[Case], mode: str, verify: bool, workers: int) -> Report:
                 mode=mode,
                 verify=verify,
                 run_name=f"eval:{mode}{'+v' if verify else ''}:{case.id}",
+                # The mutated file exists only in this process. A linter would
+                # read the unmutated one off disk and report on code the reviewer
+                # was never shown, which is not a pre-pass, it is contamination.
+                lint=False,
             ): case
             for case in cases
         }
@@ -161,6 +165,11 @@ def main(
     arms: str = typer.Option("multi+verify", "--arms", help="Comma-separated, or 'all'."),
     n_defect: int = typer.Option(20, "--n-defect"),
     n_clean: int = typer.Option(20, "--n-clean"),
+    n_crossfile: int = typer.Option(
+        0, "--n-crossfile",
+        help="Defects visible only from another file — the measurement for "
+             "repository expansion. Python callers only.",
+    ),
     repeats: int = typer.Option(1, "--repeats", help="Repeat runs to measure the noise floor."),
     workers: int = typer.Option(4, "--workers"),
     seed: int = typer.Option(0, "--seed"),
@@ -172,15 +181,41 @@ def main(
     if unknown:
         raise typer.BadParameter(f"Unknown arm(s): {unknown}. Choose from {list(ARMS)}.")
 
-    cases = build(source.expanduser().resolve(), n_defect=n_defect, n_clean=n_clean, seed=seed)
+    cases = build(
+        source.expanduser().resolve(),
+        n_defect=n_defect,
+        n_clean=n_clean,
+        seed=seed,
+        n_crossfile=n_crossfile,
+    )
     n_d = sum(1 for c in cases if c.kind == "defect")
     n_c = len(cases) - n_d
-    console.print(f"[dim]Corpus: {n_d} seeded defects, {n_c} clean controls, from {source}[/dim]")
+    n_x = sum(1 for c in cases if c.id.startswith("defect-x"))
+    console.print(
+        f"[dim]Corpus: {n_d} seeded defects ({n_x} cross-file), {n_c} clean "
+        f"controls, from {source}[/dim]"
+    )
+    # Both switches change what is being measured, and neither is visible in the
+    # table below. A result file that does not say which run it was is a result
+    # nobody can compare against anything.
+    console.print(
+        f"[dim]Citations {'on' if GROUNDING else 'off'} · repository expansion "
+        f"{INDEX} · lint pre-pass off (the corpus is in memory)[/dim]"
+    )
 
-    if n_d < n_defect or n_c < n_clean:
+    if n_d - n_x < n_defect or n_c < n_clean:
         console.print(
-            f"[yellow]Note:[/yellow] asked for {n_defect}/{n_clean}, got {n_d}/{n_c} — "
-            "mutators found fewer candidate sites than requested in this source tree."
+            f"[yellow]Note:[/yellow] asked for {n_defect}/{n_clean}, got "
+            f"{n_d - n_x}/{n_c} — mutators found fewer candidate sites than "
+            "requested in this source tree."
+        )
+    if n_x < n_crossfile:
+        console.print(
+            f"[yellow]Note:[/yellow] asked for {n_crossfile} cross-file case(s), "
+            f"got {n_x}. They need a Python call whose function is defined in "
+            "another file of the same repository, with a plain signature and at "
+            "least two arguments. A number built on very few of these is noise, "
+            "not a measurement."
         )
 
     if dry_run:
@@ -233,7 +268,12 @@ def main(
                 "source": str(source),
                 "seed": seed,
                 "n_defect": n_d,
+                "n_crossfile": n_x,
                 "n_clean": n_c,
+                "grounding": GROUNDING,
+                "index": INDEX,
+                "model": MODEL,
+                "provider": PROVIDER,
                 "arms": {
                     arm: {
                         "runs": [r.as_dict() for r in reps],
@@ -254,6 +294,11 @@ def push(
     dataset: str = typer.Option("code-review-seeded-bugs", "--dataset"),
     n_defect: int = typer.Option(20, "--n-defect"),
     n_clean: int = typer.Option(20, "--n-clean"),
+    n_crossfile: int = typer.Option(
+        0, "--n-crossfile",
+        help="Defects visible only from another file — the measurement for "
+             "repository expansion. Python callers only.",
+    ),
     seed: int = typer.Option(0, "--seed"),
 ) -> None:
     """Push the corpus to LangSmith as a dataset, so experiments are comparable there."""

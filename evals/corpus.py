@@ -51,8 +51,15 @@ def eligible_files(root: Path, min_lines: int = 40, max_lines: int = 400) -> lis
     return sorted(out)
 
 
-def build_request(path: str, original: str, mutated: str, ref: str) -> ReviewRequest:
-    """Synthesise the diff the mutation would have produced."""
+def build_request(
+    path: str, original: str, mutated: str, ref: str, repo_root: str = "."
+) -> ReviewRequest:
+    """Synthesise the diff the mutation would have produced.
+
+    `repo_root` points at the repository the source came from, so the reviewer can
+    look up definitions the changed lines call. The mutated file exists only here,
+    in memory — everything else the reviewer reads from that checkout is real.
+    """
     a, b = original.splitlines(), mutated.splitlines()
     sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
     hunks: list[Hunk] = []
@@ -73,9 +80,64 @@ def build_request(path: str, original: str, mutated: str, ref: str) -> ReviewReq
     return ReviewRequest(
         source="local",
         ref=ref,
+        repo_root=repo_root,
         title=f"eval case: {path}",
         files=[FileDiff(path=path, change_type="modified", hunks=hunks, content_after=mutated)],
     )
+
+
+def crossfile_cases(
+    source_root: Path, files: list[Path], rng: random.Random, want: int
+) -> list[Case]:
+    """Cases whose defect is only visible from another file.
+
+    Built with the reviewer's own index, for the same reason the corpus uses the
+    reviewer's own path filter: two implementations of "where is this defined"
+    would drift, and the harness would end up measuring the drift.
+    """
+    if want <= 0:
+        return []
+
+    from loupe.index import build as build_index
+
+    from .crossfile import MUTATORS, find_sites
+
+    index = build_index(source_root, max_files=2000)
+    pool = list(files)
+    rng.shuffle(pool)
+    cases: list[Case] = []
+
+    for caller in pool:
+        if len(cases) >= want:
+            break
+        sites = find_sites(source_root, caller, index)
+        rng.shuffle(sites)
+        for site in sites:
+            made = len(cases)
+            result = MUTATORS[made % len(MUTATORS)](site, rng)
+            if result is None:
+                continue
+            mutated, mutation = result
+            rel = caller.relative_to(source_root).as_posix()
+            request = build_request(
+                rel, site.source, mutated, f"crossfile/{mutation.name}/{rel}",
+                repo_root=str(source_root),
+            )
+            if not request.reviewable:
+                continue
+            cases.append(
+                Case(
+                    id=f"defect-x{made:03d}-{mutation.name}",
+                    kind="defect",
+                    request=request,
+                    truth=mutation,
+                )
+            )
+            # One case per file: several mutations of the same file would share
+            # its surrounding code, and near-duplicate cases inflate whichever
+            # way that file happens to go.
+            break
+    return cases
 
 
 def build(
@@ -83,6 +145,7 @@ def build(
     n_defect: int = 20,
     n_clean: int = 20,
     seed: int = 0,
+    n_crossfile: int = 0,
 ) -> list[Case]:
     rng = random.Random(seed)
     files = eligible_files(source_root)
@@ -115,8 +178,10 @@ def build(
             mutated = "\n".join(lines) + ("\n" if original.endswith("\n") else "")
             if mutated == original:
                 continue
-            rel = str(path.relative_to(source_root))
-            request = build_request(rel, original, mutated, f"{kind}/{name}/{rel}")
+            rel = path.relative_to(source_root).as_posix()
+            request = build_request(
+                rel, original, mutated, f"{kind}/{name}/{rel}", repo_root=str(source_root)
+            )
             if not request.reviewable:
                 # Belt and braces: a case the reviewer will not look at cannot be
                 # scored, and silently keeping it reports 0% detection instead of
@@ -134,4 +199,5 @@ def build(
 
     attempt(defect_mutators, "defect", n_defect)
     attempt(benign_mutators, "clean", n_clean)
+    cases.extend(crossfile_cases(source_root, files, rng, n_crossfile))
     return cases

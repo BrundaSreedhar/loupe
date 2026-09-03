@@ -25,6 +25,7 @@ def run_review(
     verify: bool = True,
     run_name: str | None = None,
     remember: bool = True,
+    lint: bool | None = None,
 ) -> ReviewResult:
     reset_usage()
     final = _graph().invoke(
@@ -33,6 +34,7 @@ def run_review(
             "mode": mode,
             "verify": verify,
             "remember": remember,
+            "lint": lint,
             "findings": [],
             "verdicts": [],
             "consensus": [],
@@ -44,7 +46,8 @@ def run_review(
             "metadata": {
                 "mode": mode,
                 "verify": verify,
-            "remember": remember,
+                "remember": remember,
+                "lint": lint,
                 "source": request.source,
                 "ref": request.ref,
                 "files": len(request.reviewable),
@@ -94,6 +97,9 @@ def run_review(
             # review never happened, which must not be reported as "found nothing".
             "contexts": len(final.get("contexts") or {}),
             "fallback_stages": len(fell_back),
+            # Definitions pulled in from elsewhere in the repository. Zero means
+            # the reviewers saw the diff and nothing else.
+            "references": len(final.get("references") or []),
             "reconsidered": len(final.get("consensus") or []),
         },
     )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import subprocess
 from pathlib import Path
 
@@ -46,6 +47,41 @@ def _empty_tree(cwd: str) -> str:
     return _git(["hash-object", "-t", "tree", "/dev/null"], cwd).strip()
 
 
+def _untracked(root: str) -> list[str]:
+    """Files Git deliberately omits from every normal diff.
+
+    A local reviewer should see a new source file before the author remembers to
+    stage it. ``--exclude-standard`` honours the repository's own ignore rules.
+    """
+    return [p for p in _git(["ls-files", "--others", "--exclude-standard"], root).splitlines() if p]
+
+
+def _untracked_diff(root: str) -> list:
+    from .diffparse import parse_unified_diff
+
+    files = []
+    for path in _untracked(root):
+        disk = Path(root) / path
+        if not disk.is_file():
+            continue
+        try:
+            content = disk.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        body = "".join(
+            difflib.unified_diff(
+                [], content.splitlines(keepends=True), fromfile="/dev/null", tofile=f"b/{path}"
+            )
+        )
+        parsed = parse_unified_diff(
+            f"diff --git a/{path} b/{path}\nnew file mode 100644\n{body}"
+        )
+        for fd in parsed:
+            fd.content_after = content
+        files.extend(parsed)
+    return files
+
+
 def _suggest(ref: str, root: str) -> str:
     """A ref failing on a young repository is nearly always the ~N walking off the
     end of history, which the bare git error does not say."""
@@ -64,7 +100,9 @@ def _suggest(ref: str, root: str) -> str:
     )
 
 
-def load(ref: str = "HEAD~1", repo_root: str = ".", staged: bool = False) -> ReviewRequest:
+def load(
+    ref: str = "HEAD~1", repo_root: str = ".", staged: bool = False, include_untracked: bool = True
+) -> ReviewRequest:
     root = str(Path(repo_root).resolve())
     has_head = _resolves("HEAD", root)
 
@@ -86,6 +124,8 @@ def load(ref: str = "HEAD~1", repo_root: str = ".", staged: bool = False) -> Rev
     diff_text = _git(args, root)
 
     files = parse_unified_diff(diff_text)
+    if include_untracked:
+        files.extend(_untracked_diff(root))
     for f in files:
         if f.is_binary or f.change_type == "deleted":
             continue

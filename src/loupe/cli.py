@@ -9,9 +9,10 @@ from rich.console import Console
 
 from .adapters import github_pr, local_git
 from .adapters.local_git import GitError
-from .config import MODEL, PROVIDER, RPM, credentials_present, key_env_var
-from .emit import post_to_github, render
+from .config import MODE, MODEL, PROVIDER, RPM, TRACING, credentials_present, key_env_var
+from .emit import post_to_github, render, render_json
 from .logs import setup_logging
+from .privacy import assurance, destinations
 from .runner import run_review
 
 app = typer.Typer(add_completion=False, help="Multi-agent code reviewer.")
@@ -39,6 +40,7 @@ Verbose = typer.Option(
     0, "--verbose", "-v", count=True,
     help="-v shows what each stage did; -vv adds debug; -vvv adds HTTP traffic.",
 )
+Output = typer.Option("text", "--output", help="Output format: text or json.")
 
 
 def _explain_nothing(request, target: str) -> None:
@@ -69,17 +71,25 @@ def _explain_nothing(request, target: str) -> None:
 def local(
     ref: str = typer.Argument("HEAD~1", help="Ref to diff against."),
     staged: bool = typer.Option(False, "--staged", help="Review the index instead."),
+    untracked: bool = typer.Option(
+        True, "--untracked/--no-untracked", help="Include untracked source files."
+    ),
     repo_root: str = typer.Option(".", "--repo-root"),
     mode: str = Mode,
     no_verify: bool = NoVerify,
     fresh: bool = Fresh,
+    output: str = Output,
     verbose: int = Verbose,
 ) -> None:
     """Review a local diff."""
     setup_logging(verbose)
+    if output not in {"text", "json"}:
+        raise typer.BadParameter("--output must be text or json")
     _preflight()
     try:
-        request = local_git.load(ref=ref, repo_root=repo_root, staged=staged)
+        request = local_git.load(
+            ref=ref, repo_root=repo_root, staged=staged, include_untracked=untracked
+        )
     except GitError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from exc
@@ -100,7 +110,7 @@ def local(
     else:
         with console.status("Reviewing…"):
             result = run_review(request, mode=mode, verify=not no_verify, remember=not fresh)
-    render(result, request, console)
+    (render_json if output == "json" else render)(result, request, console)
 
 
 @app.command()
@@ -112,10 +122,16 @@ def pr(
     post: bool = typer.Option(
         False, "--post", help="Post findings to the PR. Off by default — this writes to GitHub."
     ),
+    output: str = Output,
     verbose: int = Verbose,
 ) -> None:
     """Review a GitHub pull request."""
     setup_logging(verbose)
+    if MODE == "offline":
+        console.print("[red]PR review is unavailable in offline mode.[/red] Use `loupe local`.")
+        raise typer.Exit(1)
+    if output not in {"text", "json"}:
+        raise typer.BadParameter("--output must be text or json")
     _preflight()
     request = github_pr.load(repo, number)
     if not request.reviewable:
@@ -130,7 +146,7 @@ def pr(
             result = run_review(
                 request, mode=mode, verify=not no_verify, run_name=f"{repo}#{number}"
             )
-    render(result, request, console)
+    (render_json if output == "json" else render)(result, request, console)
 
     if not post:
         console.print("[dim]Dry run — nothing posted. Pass --post to publish.[/dim]")
@@ -168,7 +184,11 @@ def init(
 
 
 @app.command()
-def doctor() -> None:
+def doctor(
+    egress: bool = typer.Option(
+        False, "--egress", help="Show every destination a review may contact."
+    ),
+) -> None:
     """Show what is configured, before spending anything finding out."""
     ok = credentials_present()
     console.print(f"  provider      {PROVIDER}")
@@ -177,12 +197,21 @@ def doctor() -> None:
         f"  {key_env_var():<13} " + ("[green]set[/green]" if ok else "[red]missing[/red]")
     )
     console.print(f"  rate limit    {f'{RPM} req/min (client-side)' if RPM else 'none'}")
-    tracing = os.getenv("LANGSMITH_TRACING", "").lower() in ("1", "true", "yes")
     has_ls = bool(os.getenv("LANGSMITH_API_KEY"))
     console.print(
-        f"  tracing       {'on' if tracing and has_ls else 'off'}"
-        + ("" if has_ls or not tracing else "  [yellow](LANGSMITH_TRACING set but no key)[/yellow]")
+        f"  mode          {MODE}\n"
+        f"  tracing       {'on' if TRACING and has_ls else 'off'}"
+        + ("" if has_ls or not TRACING else "  [yellow](LOUPE_TRACING set but no key)[/yellow]")
     )
+    console.print(f"  privacy       {assurance()}")
+    if egress:
+        console.print("\n  [bold]Possible egress[/bold]")
+        for item in destinations():
+            state = "[green]enabled[/green]" if item.enabled else "[dim]disabled[/dim]"
+            console.print(
+                f"  {state:<19} {item.destination}\n"
+                f"                    [dim]{item.data}[/dim]"
+            )
     if not ok:
         raise typer.Exit(1)
 

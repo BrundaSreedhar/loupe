@@ -48,7 +48,8 @@ def warm_cache(state: ReviewState, config: RunnableConfig) -> dict:
         return {}
     # This is a blocking call the fan-out waits on. On a small review it costs a
     # full round-trip to save less than one.
-    size = sum(c.tokens for c in contexts.values())
+    references = state.get("references") or []
+    size = sum(c.tokens for c in contexts.values()) + sum(r.tokens for r in references)
     if size < WARM_MIN_TOKENS:
         log.info("skipping cache warm: prefix is only ~%d tokens", size)
         return {}
@@ -56,7 +57,11 @@ def warm_cache(state: ReviewState, config: RunnableConfig) -> dict:
         with_short_output(specialist_llm()).invoke(
             [
                 SystemMessage(SHARED_SYSTEM),
-                HumanMessage(content=cached_block(context_message(state["request"], contexts))),
+                HumanMessage(content=cached_block(
+                    # Byte-identical to what the reviewers send, references
+                    # included — a warm written without them warms nothing.
+                    context_message(state["request"], contexts, references)
+                )),
                 HumanMessage("Reply with OK."),
             ],
             config={"run_name": "warm_cache", "tags": ["cache"]},

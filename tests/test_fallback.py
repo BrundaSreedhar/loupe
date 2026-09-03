@@ -137,6 +137,27 @@ def test_verifier_model_defaults_to_the_main_model(monkeypatch, isolated_config)
     assert config.VERIFIER_MODEL == config.MODEL == "gemini-3.5-flash"
 
 
+def test_offline_mode_requires_a_loopback_local_model(monkeypatch, isolated_config):
+    monkeypatch.setenv("LOUPE_MODE", "offline")
+    monkeypatch.setenv("LOUPE_PROVIDER", "local")
+    monkeypatch.setenv("LOUPE_LOCAL_BASE_URL", "http://127.0.0.1:11434/v1")
+    config = isolated_config()
+    assert config.credentials_present()
+    assert config.TRACING is False
+
+    monkeypatch.setenv("LOUPE_LOCAL_BASE_URL", "https://models.example.test/v1")
+    with pytest.raises(ValueError, match="loopback"):
+        isolated_config()
+
+
+def test_tracing_is_off_unless_loupe_explicitly_enables_it(monkeypatch, isolated_config):
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    monkeypatch.delenv("LOUPE_TRACING", raising=False)
+    config = isolated_config()
+    assert config.TRACING is False
+    assert __import__("os").environ["LANGSMITH_TRACING"] == "false"
+
+
 @pytest.mark.parametrize("provider,expected", [
     ("google", "max_output_tokens"),
     ("anthropic", "max_tokens"),

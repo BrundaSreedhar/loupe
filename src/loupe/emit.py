@@ -6,7 +6,9 @@ runs the graph thousands of times.
 
 from __future__ import annotations
 
+import json
 import os
+from dataclasses import asdict, is_dataclass
 
 import httpx
 from rich.console import Console
@@ -14,9 +16,24 @@ from rich.padding import Padding
 from rich.panel import Panel
 from rich.text import Text
 
+from .grounding import cited_text
 from .schema import ReviewRequest, ReviewResult
 
 _SEVERITY_STYLE = {"high": "bold red", "medium": "yellow", "low": "cyan"}
+
+
+def render_json(result: ReviewResult, console: Console | None = None) -> None:
+    """Stable machine-readable review output for CI and coding agents."""
+    console = console or Console()
+
+    def encode(value):
+        if is_dataclass(value):
+            return asdict(value)
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        raise TypeError(f"cannot encode {type(value).__name__}")
+
+    console.print_json(json.dumps(result.model_dump(), default=encode, sort_keys=True))
 
 
 def render_problems(result: ReviewResult, console: Console) -> None:
@@ -88,6 +105,14 @@ def render(result: ReviewResult, request: ReviewRequest, console: Console | None
             head.append(f"  line {f.line}", style="dim")
             body = Text()
             body.append(f.summary + "\n\n", style="bold")
+            # The line the claim rests on, so the reader can check it here rather
+            # than opening the file to find out what the finding is even about.
+            quoted = cited_text(f.evidence)
+            if quoted:
+                for offset, text in enumerate(quoted.splitlines()):
+                    body.append(f"{f.line + offset:>5}| ", style="dim")
+                    body.append(text + "\n", style="cyan")
+                body.append("\n")
             body.append("Fails when: ", style="dim")
             body.append(f.failure_scenario)
             if f.fix:
@@ -113,6 +138,11 @@ def render(result: ReviewResult, request: ReviewRequest, console: Console | None
         + (
             f"   ·   {u.get('dropped_files', 0):.0f} file(s) over budget"
             if u.get("dropped_files")
+            else ""
+        )
+        + (
+            f"   ·   read {u.get('references', 0):.0f} called definition(s)"
+            if u.get("references")
             else ""
         )
         + "[/dim]"

@@ -14,6 +14,7 @@ import os
 from functools import cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from langchain_core.language_models import BaseChatModel
@@ -45,11 +46,38 @@ for _candidate in (Path(__file__).resolve().parents[2] / ".env", USER_CONFIG):
     if _candidate.is_file():
         load_dotenv(_candidate, override=False)
 
-PROVIDER = os.getenv("LOUPE_PROVIDER", "google").lower()
+MODE = os.getenv("LOUPE_MODE", "cloud").lower()
+if MODE not in {"offline", "private", "cloud"}:
+    raise ValueError("LOUPE_MODE must be one of ['offline', 'private', 'cloud']")
 
-_DEFAULT_MODEL = {"google": "gemini-3.5-flash", "anthropic": "claude-opus-5"}
-_CHEAP_MODEL = {"google": "gemini-3.5-flash-lite", "anthropic": "claude-opus-5"}
-_KEY_ENV = {"google": "GOOGLE_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+# ``local`` is deliberately a provider rather than a special execution path: an
+# OpenAI-compatible endpoint lets Ollama, vLLM and llama.cpp share the exact
+# structured-output pipeline used by hosted models.
+PROVIDER = os.getenv("LOUPE_PROVIDER", "google").lower()
+if PROVIDER == "openai-compatible":
+    PROVIDER = "local"
+
+_DEFAULT_MODEL = {
+    "google": "gemini-3.5-flash",
+    "anthropic": "claude-opus-5",
+    "local": "qwen3-coder",
+}
+_CHEAP_MODEL = {
+    "google": "gemini-3.5-flash-lite",
+    "anthropic": "claude-opus-5",
+    "local": "qwen3-coder",
+}
+_KEY_ENV = {
+    "google": "GOOGLE_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "local": "LOUPE_LOCAL_API_KEY",
+}
+
+# Ollama exposes an OpenAI-compatible API at this address; vLLM and llama.cpp
+# work by pointing this at their own local server. A key is optional because
+# most loopback runtimes do not require one.
+LOCAL_BASE_URL = os.getenv("LOUPE_LOCAL_BASE_URL", "http://127.0.0.1:11434/v1")
+LOCAL_API_KEY = os.getenv("LOUPE_LOCAL_API_KEY", "")
 
 # A second model to fall back to when the day's quota is exhausted. The cap is per
 # model, so naming a different one here buys a whole extra allowance. Empty
@@ -87,6 +115,26 @@ def _resolve_model(env_var: str, defaults: dict[str, str]) -> str:
         return defaults[PROVIDER]
     return configured
 
+
+def _is_loopback(url: str) -> bool:
+    host = urlparse(url).hostname
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
+if MODE == "offline" and (PROVIDER != "local" or not _is_loopback(LOCAL_BASE_URL)):
+    raise ValueError(
+        "LOUPE_MODE=offline requires LOUPE_PROVIDER=local and a loopback "
+        "LOUPE_LOCAL_BASE_URL (localhost, 127.0.0.1, or ::1)."
+    )
+
+# LangChain observes these environment variables globally. Unless the user
+# explicitly opts in, turn tracing off before model bindings are constructed so
+# a local review cannot unexpectedly create a remote trace.
+TRACING = os.getenv("LOUPE_TRACING", "off").lower() in {"1", "true", "yes", "on"}
+if MODE == "offline":
+    TRACING = False
+if not TRACING:
+    os.environ["LANGSMITH_TRACING"] = "false"
 
 MODEL = _resolve_model("LOUPE_MODEL", _DEFAULT_MODEL)
 CHEAP_MODEL = _resolve_model("LOUPE_CHEAP_MODEL", _CHEAP_MODEL)
@@ -154,6 +202,31 @@ def lint_enabled(source: str) -> bool:
         return False
     return source == "local"
 
+# Whether a finding must quote the source line it reasoned from, and be dropped
+# when the quote is not in the file. Free — no model call — so `off` exists for
+# measurement, not for saving anything.
+GROUNDING = os.getenv("LOUPE_GROUNDING", "on").lower() != "off"
+# How far a finding may be moved to meet its own quote. Reviewers are routinely a
+# line or two out; past this, a quote matching some other part of the file is more
+# likely a coincidence than the intended target.
+GROUNDING_WINDOW = int(os.getenv("LOUPE_GROUNDING_WINDOW", "5"))
+
+# Whether to look up definitions that the changed lines call, and show them.
+#   auto — on for a local diff, off for a pull request. A PR's repository is not
+#          on this disk; there is nothing to read.
+#   on   — always. off — never.
+INDEX = os.getenv("LOUPE_INDEX", "auto").lower()
+# Tokens for all referenced definitions together. They sit in the shared cached
+# prefix, so this is paid once per review, not once per reviewer.
+INDEX_TOKEN_BUDGET = int(os.getenv("LOUPE_INDEX_TOKEN_BUDGET", "6000"))
+# Lines of any one definition. Past this the signature and the top of the body
+# are what matter; the rest is budget spent on a function nobody changed.
+DEF_MAX_LINES = int(os.getenv("LOUPE_DEF_MAX_LINES", "40"))
+# Files to parse when indexing. A cap so a review of a two-line change in a huge
+# monorepo does not spend a minute walking it.
+INDEX_MAX_FILES = int(os.getenv("LOUPE_INDEX_MAX_FILES", "1500"))
+
+
 # What to do when a credential is found in the diff.
 #   redact — blank the value, review the rest (default: the secret never leaves,
 #            and you still get a review)
@@ -164,6 +237,8 @@ ON_SECRET = os.getenv("LOUPE_ON_SECRET", "redact").lower()
 
 
 def credentials_present() -> bool:
+    if PROVIDER == "local":
+        return bool(LOCAL_BASE_URL)
     if PROVIDER == "anthropic":
         return bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"))
     return bool(os.getenv("GOOGLE_API_KEY"))
@@ -231,6 +306,17 @@ def _llm(
             rate_limiter=_rate_limiter(),
         )
 
+    if PROVIDER == "local":
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=model,
+            base_url=LOCAL_BASE_URL,
+            api_key=LOCAL_API_KEY or "ollama",
+            max_tokens=max_tokens,
+            rate_limiter=_rate_limiter(),
+        )
+
     from langchain_google_genai import ChatGoogleGenerativeAI
 
     return ChatGoogleGenerativeAI(
@@ -270,6 +356,7 @@ def with_short_output(llm: Any, limit: int = 16) -> Any:
     key = {
         "anthropic": "max_tokens",
         "google": "max_output_tokens",
+        "local": "max_tokens",
     }[PROVIDER]
     return llm.bind(**{key: limit})
 

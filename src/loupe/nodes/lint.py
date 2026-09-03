@@ -14,7 +14,8 @@ log = logging.getLogger(__name__)
 
 def lint(state: ReviewState) -> dict:
     request = state["request"]
-    if not lint_enabled(request.source):
+    wanted = state.get("lint")
+    if wanted is False or (wanted is None and not lint_enabled(request.source)):
         log.info("lint pre-pass off for a %s review", request.source)
         return {"lint_issues": []}
 

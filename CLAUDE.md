@@ -49,6 +49,7 @@ loupe pipeline                         # print the compiled graph
 loupe local HEAD~1 -v               # show what each stage did
 loupe local HEAD~1 -vv              # add debug;  -vvv adds HTTP traffic
 python -m evals.run_eval main --source ~/repo --n-defect 6 --n-clean 6
+python -m evals.run_eval main --source ~/repo --n-crossfile 8   # cross-file defects
 python -m evals.run_eval main --source ~/repo --dry-run    # corpus only, no calls
 pytest -q
 ruff check src evals tests
@@ -90,6 +91,27 @@ skipped when there was nothing to check. Every zero it prints must be provably
 "we looked and found nothing" rather than "we never looked". `Report.reviewed`
 exists for this; keep it honest.
 
+## Seeing past the diff
+
+Two mechanisms, both of which fail closed.
+
+**Citations.** Every finding quotes the source line it reasoned from, and the
+quote is matched against the file. No model call. A quote that is not there drops
+the finding; a quote matching one line nearby moves the finding to it. The one
+exception is load-bearing: if *no* finding in a batch carried a quote, the model
+failed to fill the field and nothing is dropped — otherwise a provider-side
+failure renders as a clean review, which is the mistake this repo has shipped
+three times.
+
+**Expansion.** `index.py` reads the repository once and resolves the names the
+changed lines call, so a reviewer can see what `validate(payload)` actually does.
+Every resolution rule prefers nothing over a guess: two definitions with one name
+resolve to nothing, an import from outside the repo never falls back to a local
+function of the same name, and a definition already on screen is not re-sent.
+Python only, via `ast` — a regex approximating a parser across ten languages is
+how a reviewer ends up reading the wrong `validate`, and being wrong there is
+invisible to everyone downstream.
+
 ## Memory
 
 Findings carry both an `id` (uuid, per run, used to match a verdict to its claim)
@@ -124,6 +146,19 @@ cannot check, which is right for a bad response and wrong for a quota failure �
 that produces a clean-looking review that never happened. Call `raise_if_terminal`
 first.
 
+**The references belong in the cached prefix.** Same rule as the role rubric,
+opposite direction: definitions from the index go into `context_message`, which is
+byte-identical for all four reviewers, and `warm_cache` must send exactly what the
+reviewers will send — references included. Warming without them warms nothing.
+
+**The corpus builds cross-file cases with the reviewer's own index.** Same reason
+the corpus uses the reviewer's own path filter: two implementations of "where is
+this defined" drift, and then the harness measures the drift.
+
+**Evals turn the lint pre-pass off, on purpose.** The mutated file exists only in
+memory. A linter reads the file on disk, which is the unmutated one, and reports
+on code the reviewer was never shown. `run_review(..., lint=False)` is the switch.
+
 **`emit` is deliberately not a graph node.** Posting to a PR is a side effect and
 the eval runs the graph thousands of times. Keep it outside.
 
@@ -152,11 +187,14 @@ src/loupe/
   safety.py       secret and injection scanning
   quota.py        429 classification
   context.py      building what a reviewer sees
+  index.py        the repo's own definitions, and what a change calls
+  grounding.py    does a finding's quoted line exist, and where
   nodes/          one file per step
   prompts/        the actual prompts
   adapters/       local git, GitHub PR
 evals/
   mutations.py    ways to break real code on purpose
+  crossfile.py    defects only visible from a second file
   corpus.py       builds the test cases
   scoring.py      the metrics
   run_eval.py     the runner
@@ -164,10 +202,11 @@ evals/
 
 ## Testing
 
-76 tests, no network. Model calls are faked at the node boundary. The end-to-end
+222 tests, no network. Model calls are faked at the node boundary. The end-to-end
 tests in `test_graph_e2e.py` fake the models but run the real graph, which is what
 catches wiring bugs the unit tests miss.
 
-Two tests exist because they nearly went wrong silently: a planted credential must
-never reach the model, and a planted `ignore previous instructions` comment must
-not stop a real bug being found in the same file.
+Three tests exist because they nearly went wrong silently: a planted credential
+must never reach the model, a planted `ignore previous instructions` comment must
+not stop a real bug being found in the same file, and a credential sitting in an
+unchanged file that expansion pulls in must not leave the machine either.

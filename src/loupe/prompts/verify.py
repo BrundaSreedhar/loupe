@@ -8,6 +8,7 @@ the diff so it is reasoning from different evidence than the reviewer had.
 
 from __future__ import annotations
 
+from ..grounding import cited_text
 from ..schema import Finding
 
 SYSTEM = """\
@@ -48,9 +49,15 @@ def user_prompt(findings: list[Finding], path: str, file_source: str) -> str:
     evidence — the source is shared, the verdicts are not."""
     blocks = []
     for i, f in enumerate(findings):
+        # The quoted line is already known to be in the file — it was matched
+        # before this call. It is here so the verifier judges the claim against
+        # the code the reviewer actually read, rather than re-deriving which line
+        # was meant from the summary.
+        quoted = cited_text(f.evidence)
+        cited = f"\n    quoted line:      {quoted.splitlines()[0]}" if quoted else ""
         blocks.append(
             f"[{i}] line {f.line} · {f.category}/{f.severity} · filed by "
-            f"{f.produced_by} (self-reported {f.confidence:.2f})\n"
+            f"{f.produced_by} (self-reported {f.confidence:.2f}){cited}\n"
             f"    summary:          {f.summary}\n"
             f"    failure scenario: {f.failure_scenario}"
         )

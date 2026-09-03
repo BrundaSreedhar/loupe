@@ -16,6 +16,7 @@ from .config import CONSENSUS_SAMPLES, FANOUT, SPECIALIST_ROLES, VERIFY_MODE
 from .consensus import is_borderline
 from .nodes.consensus import reconsider
 from .nodes.dedupe import dedupe
+from .nodes.expand import expand
 from .nodes.finalize import finalize
 from .nodes.lint import lint
 from .nodes.prepare import prepare, warm_cache
@@ -53,6 +54,7 @@ def fan_out(state: ReviewState):
                 "request": state["request"],
                 "contexts": contexts,
                 "lint_issues": state.get("lint_issues") or [],
+                "references": state.get("references") or [],
             },
         )
         for role in roles
@@ -127,6 +129,7 @@ def build_graph(checkpointer=None):
 
     g.add_node("preflight", preflight)
     g.add_node("prepare", prepare)
+    g.add_node("expand", expand)
     g.add_node("lint", lint)
     g.add_node("warm_cache", warm_cache, retry_policy=_RETRY)
     g.add_node("specialist", specialist, retry_policy=_RETRY)
@@ -137,7 +140,10 @@ def build_graph(checkpointer=None):
 
     g.add_edge(START, "preflight")
     g.add_edge("preflight", "prepare")
-    g.add_edge("prepare", "lint")
+    # expand before warm_cache: the definitions it finds are part of the prefix
+    # every reviewer shares, and a prefix assembled after the warm is a cache miss.
+    g.add_edge("prepare", "expand")
+    g.add_edge("expand", "lint")
     g.add_edge("lint", "warm_cache")
     g.add_conditional_edges("warm_cache", fan_out, ["specialist", "dedupe"])
     g.add_edge("specialist", "dedupe")

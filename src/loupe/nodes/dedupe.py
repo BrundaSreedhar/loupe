@@ -13,10 +13,19 @@ from collections import defaultdict
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..config import MAX_REPORTED, MERGE_LINE_WINDOW, VERIFY_HEADROOM, merger_llm, structured
+from ..config import (
+    GROUNDING_WINDOW,
+    MAX_REPORTED,
+    MERGE_LINE_WINDOW,
+    VERIFY_HEADROOM,
+    merger_llm,
+    structured,
+)
+from ..fingerprint import compute as fingerprint
+from ..grounding import check as check_citation
 from ..prompts.merge import SYSTEM, user_prompt
 from ..quota import raise_if_terminal
-from ..schema import Finding, MergeResult, Problem
+from ..schema import Finding, MergedFinding, MergeResult, Problem, validate_fix
 from ..state import ReviewState
 from .finalize import rank_key
 
@@ -42,10 +51,52 @@ def group_by_locality(findings: list[Finding]) -> list[list[Finding]]:
     return groups
 
 
+def rejoin(merged: MergedFinding, covered: list[Finding], source: str) -> Finding:
+    """Turn a merge result back into a finding, carrying over what the merger has
+    no way to produce.
+
+    The merger reads summaries, not source, so it cannot cite a line and is not
+    asked to: the merged finding inherits the citation of the finding it kept. If
+    the merger moved the line away from that quote, the quote wins — it is the
+    half of the pair that was checked against the file.
+    """
+    payload = merged.model_dump(exclude={"covers"})
+    evidence = covered[0].evidence
+    if evidence and source:
+        cite = check_citation(evidence, source, payload["line"], GROUNDING_WINDOW)
+        payload["line"] = cite.line if cite.ok else covered[0].line
+    finding = Finding(
+        id=covered[0].id,
+        produced_by=covered[0].produced_by,
+        merged_from=[c.id for c in covered],
+        evidence=evidence,
+        # Recomputed, never inherited: the fingerprint is taken over the code
+        # around the line, and a merge can move the line. Inheriting one from
+        # before the move points memory at the wrong piece of code.
+        fingerprint=(
+            fingerprint(payload["file"], payload["category"], source, payload["line"])
+            if source
+            else ""
+        ),
+        **payload,
+    )
+    # Re-checked here rather than trusted from the merger: the line may have moved
+    # to meet the quote, and a patch whose range no longer contains the finding is
+    # an apply button that edits the wrong place.
+    return validate_fix(finding, source)
+
+
 def dedupe(state: ReviewState) -> dict:
     findings = state.get("findings") or []
     if not findings:
         return {"merged": []}
+
+    request = state.get("request")
+    sources = (
+        {f.path: f.content_after for f in request.files if f.content_after is not None}
+        if request is not None
+        else {}
+    )
 
     llm = structured(merger_llm(), MergeResult, "dedupe")
     merged: list[Finding] = []
@@ -84,15 +135,7 @@ def dedupe(state: ReviewState) -> dict:
 
         for m in result.findings:
             covered = [group[i] for i in m.covers if 0 <= i < len(group)] or group
-            payload = m.model_dump(exclude={"covers"})
-            merged.append(
-                Finding(
-                    id=covered[0].id,
-                    produced_by=covered[0].produced_by,
-                    merged_from=[c.id for c in covered],
-                    **payload,
-                )
-            )
+            merged.append(rejoin(m, covered, sources.get(m.file, "")))
 
     # Rank and shortlist here rather than in finalize. Verification costs a call
     # per file, and a finding that ranking will discard anyway is a call spent on

@@ -29,7 +29,7 @@ MUTATED = ORIGINAL.replace("value_4 = compute(4)", "value_4 = compute(5)").repla
 )
 
 
-def _raw(line: int, summary: str, category: str) -> RawFinding:
+def _raw(line: int, summary: str, category: str, evidence: str | None = None) -> RawFinding:
     return RawFinding(
         file="sample.py",
         line=line,
@@ -38,6 +38,10 @@ def _raw(line: int, summary: str, category: str) -> RawFinding:
         summary=summary,
         failure_scenario=f"When input reaches line {line}, the wrong value is returned.",
         confidence=0.8,
+        # Quote the real line by default: findings that cite code the file does
+        # not contain are dropped before dedupe, and every test below would then
+        # be measuring the citation check rather than what it means to.
+        evidence=MUTATED.splitlines()[line - 1] if evidence is None else evidence,
     )
 
 
@@ -64,7 +68,7 @@ class _FakeLLM:
         self._record(messages, config)
 
     def _record(self, messages, config):
-        self.calls.append({"config": config or {}})
+        self.calls.append({"config": config or {}, "messages": messages})
         return self.fn(messages, config or {})
 
 
@@ -210,3 +214,75 @@ def test_warm_cache_runs_once_when_prefix_is_large(wired, request_fixture, monke
 
     run_review(request_fixture, mode="multi", verify=False)
     assert len(_warms(spec)) == 1
+
+
+# ─── phase 4: citations and repository expansion ────────────────────────────
+
+
+def test_a_finding_quoting_code_that_is_not_there_is_dropped(monkeypatch, request_fixture):
+    """The whole pipeline, not the checker in isolation: a reviewer that invents
+    its evidence must not reach the report."""
+    from loupe.runner import run_review
+
+    def payload(messages, config):
+        role = (config.get("metadata") or {}).get("role", "generalist")
+        return FindingBatch(
+            findings=[
+                _raw(4, f"{role} quotes the real line", "correctness"),
+                _raw(5, f"{role} quotes a line nobody wrote", "correctness",
+                     evidence="value_5 = compute(5) * tax_rate"),
+            ]
+        )
+
+    spec = _FakeLLM(payload)
+    import loupe.nodes.prepare as prepare_mod
+    import loupe.nodes.specialists as spec_mod
+
+    monkeypatch.setattr(spec_mod, "specialist_llm", lambda: spec)
+    monkeypatch.setattr(prepare_mod, "specialist_llm", lambda: spec)
+
+    result = run_review(request_fixture, mode="single", verify=False)
+
+    assert [f.line for f in result.raw] == [4]
+    assert any("quoted" in p.detail for p in result.problems), (
+        "a dropped finding has to say so; a quiet drop looks like a clean review"
+    )
+
+
+def test_a_called_definition_reaches_every_reviewer_in_the_shared_prefix(
+    wired, monkeypatch, tmp_path
+):
+    """The point of the index: the reviewer sees the body of what the change
+    calls. It has to arrive in the cached block, or four reviewers pay four times
+    to read the same definitions."""
+    from loupe.runner import run_review
+
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "__init__.py").write_text("")
+    (tmp_path / "app" / "validators.py").write_text(
+        'def validate(payload):\n    """Reject anything without an id."""\n'
+        '    return payload["id"]\n'
+    )
+    handlers = (
+        "from app.validators import validate\n\n\n"
+        "def handle(payload):\n    return validate(payload)\n"
+    )
+    (tmp_path / "app" / "handlers.py").write_text(handlers)
+
+    request = build_request("app/handlers.py", "def handle(payload):\n    pass\n", handlers, "e2e")
+    request.repo_root = str(tmp_path)
+
+    spec, _, _ = wired
+    run_review(request, mode="multi", verify=False)
+
+    reviewer_calls = [
+        c for c in spec.calls if (c["config"].get("metadata") or {}).get("role")
+    ]
+    assert len(reviewer_calls) == 4
+    for call in reviewer_calls:
+        # messages are [system, source+references, role rubric]. The definitions
+        # belong in the middle one — the part every role shares.
+        prefix = str(call["messages"][1].content)
+        assert "BEGIN REFERENCED DEFINITIONS" in prefix
+        assert "Reject anything without an id." in prefix
+        assert "REFERENCED DEFINITIONS" not in str(call["messages"][2].content)

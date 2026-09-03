@@ -22,7 +22,9 @@ from .schema import FileContext, FileDiff, ReviewRequest
 _CHARS_PER_TOKEN = 3.4
 
 
-def _estimate(text: str) -> int:
+def estimate(text: str) -> int:
+    """Cheap local guess. Also used to price the referenced definitions, which
+    have to be measured before they are added rather than after."""
     return int(len(text) / _CHARS_PER_TOKEN)
 
 
@@ -44,9 +46,9 @@ def build_file_context(fd: FileDiff) -> FileContext | None:
     changed = fd.changed_lines
     whole = render_numbered(fd.content_after, changed)
 
-    if _estimate(whole) <= FILE_TOKEN_BUDGET:
+    if estimate(whole) <= FILE_TOKEN_BUDGET:
         return FileContext(
-            path=fd.path, content=whole, strategy="whole_file", tokens=_estimate(whole)
+            path=fd.path, content=whole, strategy="whole_file", tokens=estimate(whole)
         )
 
     # Too big: keep padded windows around each hunk, joined by explicit gap markers
@@ -76,7 +78,7 @@ def build_file_context(fd: FileDiff) -> FileContext | None:
         path=fd.path,
         content=windowed,
         strategy="windowed",
-        tokens=_estimate(windowed),
+        tokens=estimate(windowed),
         truncated=True,
     )
 

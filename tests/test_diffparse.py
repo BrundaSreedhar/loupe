@@ -138,3 +138,26 @@ def test_empty_tree_ref_reviews_the_first_commit(tmp_path):
     request = load(ref=empty, repo_root=str(tmp_path))
     assert [f.path for f in request.reviewable] == ["a.py"]
     assert request.files[0].content_after == "x = 1\ny = 2\n"
+
+
+def test_local_review_includes_untracked_source_files(tmp_path):
+    from loupe.adapters.local_git import load
+
+    _init_repo(tmp_path, {"a.py": "x = 1\n"})
+    (tmp_path / "new.py").write_text("def added():\n    return 1\n")
+
+    request = load(ref="HEAD", repo_root=str(tmp_path))
+    added = next(f for f in request.files if f.path == "new.py")
+    assert added.change_type == "added"
+    assert added.content_after == "def added():\n    return 1\n"
+    assert added.changed_lines == {1, 2}
+
+
+def test_untracked_files_can_be_excluded(tmp_path):
+    from loupe.adapters.local_git import load
+
+    _init_repo(tmp_path, {"a.py": "x = 1\n"})
+    (tmp_path / "new.py").write_text("x = 2\n")
+
+    request = load(ref="HEAD", repo_root=str(tmp_path), include_untracked=False)
+    assert not request.files

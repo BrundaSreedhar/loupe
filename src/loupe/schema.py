@@ -123,8 +123,9 @@ class FixSuggestion(BaseModel):
     note: str | None = Field(default=None, description="One short sentence on why.")
 
 
-class RawFinding(BaseModel):
-    """What a reviewer must produce. `failure_scenario` is required on purpose:
+class Claim(BaseModel):
+    """The part of a finding every producer fills in — a reviewer filing one, or
+    the merger rewriting two into one. `failure_scenario` is required on purpose:
     it is the field that makes a vague observation impossible to file."""
 
     file: str = Field(description="Repo-relative path, exactly as given in the diff.")
@@ -143,6 +144,25 @@ class RawFinding(BaseModel):
     )
     confidence: float = Field(
         ge=0.0, le=1.0, description="0-1. Calibration is measured, not trusted."
+    )
+
+
+class RawFinding(Claim):
+    """What a reviewer produces: a claim plus the line it reasoned from.
+
+    The citation is checked against the real file before the finding goes any
+    further, which costs nothing and catches a claim about code that is not there.
+    It is also what the report shows next to the summary, so the evidence arrives
+    with the argument instead of having to be reconstructed.
+    """
+
+    evidence: str = Field(
+        default="",
+        description="The exact source line your claim rests on, copied "
+        "character-for-character from the numbered listing WITHOUT the `>123| ` "
+        "prefix. Two or three consecutive lines if the defect needs them. This is "
+        "matched against the real file: a quote that is not in it means the "
+        "finding is discarded, so copy, do not retype.",
     )
 
 
@@ -224,8 +244,13 @@ class ReviewResult(BaseModel):
     usage: dict[str, float] = Field(default_factory=dict)
 
 
-class MergedFinding(RawFinding):
-    """A merge output. `covers` indexes back into the group the merger was given."""
+class MergedFinding(Claim):
+    """A merge output. `covers` indexes back into the group the merger was given.
+
+    No `evidence` field: the merger is doing bookkeeping, not reading source, and
+    a citation it invented would be checked against a file it was never shown. The
+    merged finding inherits the citation of the finding it kept.
+    """
 
     covers: list[int] = Field(default_factory=list)
 

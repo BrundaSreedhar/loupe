@@ -26,8 +26,13 @@ _WS = re.compile(r"\s+")
 _AROUND_PUNCT = re.compile(r"\s*([^\w\s])\s*")
 
 
-def _normalise(line: str) -> str:
-    """Whitespace-insensitive, so reformatting is not a new finding."""
+def normalise(line: str) -> str:
+    """Whitespace-insensitive, so reformatting is not a new finding.
+
+    Shared with `grounding`, which compares a reviewer's quoted line against the
+    real file. The two need one notion of "the same line", or a citation would
+    pass one check and fail the other over a space.
+    """
     return _AROUND_PUNCT.sub(r"\1", _WS.sub(" ", line)).strip()
 
 
@@ -37,7 +42,7 @@ def code_window(source: str, line: int, window: int = WINDOW) -> str:
         return ""
     lo = max(0, line - 1 - window)
     hi = min(len(lines), line + window)
-    return "\n".join(_normalise(text) for text in lines[lo:hi])
+    return "\n".join(normalise(text) for text in lines[lo:hi])
 
 
 def compute(file: str, category: str, source: str, line: int) -> str:
