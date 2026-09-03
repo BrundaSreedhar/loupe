@@ -87,6 +87,12 @@ def _resolve_model(env_var: str, defaults: dict[str, str]) -> str:
 MODEL = _resolve_model("REVIEWER_MODEL", _DEFAULT_MODEL)
 CHEAP_MODEL = _resolve_model("REVIEWER_CHEAP_MODEL", _CHEAP_MODEL)
 
+# Google's free-tier daily cap is per project *and per model* — the quota id in
+# the 429 body is GenerateRequestsPerDayPerProjectPerModel. So pointing different
+# roles at different models gives each its own daily allowance instead of all
+# three draining one. Defaults to MODEL, i.e. no change unless you opt in.
+VERIFIER_MODEL = _resolve_model("REVIEWER_VERIFIER_MODEL", dict.fromkeys(_DEFAULT_MODEL, MODEL))
+
 # Requests per minute, client-side. Google's free tier is measured in tens of RPM,
 # and one multi-agent review is ~8-12 calls, so without this an eval run trips the
 # quota within the first minute. 0 disables the limiter.
@@ -174,8 +180,10 @@ def local_llm(max_tokens: int = 8000) -> BaseChatModel | None:
     return _ollama(FALLBACK_MODEL, max_tokens)
 
 
-def _llm(effort: str, max_tokens: int = 16000, cheap: bool = False) -> BaseChatModel:
-    model = CHEAP_MODEL if cheap else MODEL
+def _llm(
+    effort: str, max_tokens: int = 16000, cheap: bool = False, model: str | None = None
+) -> BaseChatModel:
+    model = model or (CHEAP_MODEL if cheap else MODEL)
 
     if PROVIDER == "ollama":
         return _ollama(model, max_tokens)
@@ -211,7 +219,7 @@ def specialist_llm() -> BaseChatModel:
 def verifier_llm() -> BaseChatModel:
     """The verification pass. Runs at high effort — lowering it trades directly
     against the precision the gate exists to provide."""
-    return _llm("high", max_tokens=8000)
+    return _llm("high", max_tokens=8000, model=VERIFIER_MODEL)
 
 
 @cache

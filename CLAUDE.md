@@ -8,9 +8,18 @@ notices.
 
 ## Read this before spending a model call
 
-**The Google free tier is 20 requests per day.** Not 1,500 — that number is in a
-lot of blog posts and it is wrong for this account. One full review is about ten
-calls, so the daily budget is roughly **two reviews**.
+**The Google free tier is 20 requests per day, per model.** Not 1,500 — that
+number is in a lot of blog posts and it is wrong for this account. One full review
+is about ten calls, so a single model buys roughly **two reviews a day**.
+
+The cap being per model is the useful part: the quota id is
+`GenerateRequestsPerDayPerProjectPerModel`, so pointing roles at different models
+gives each its own allowance. `REVIEWER_MODEL`, `REVIEWER_VERIFIER_MODEL` and
+`REVIEWER_CHEAP_MODEL` are separate for exactly this reason.
+
+Available models change often. List what this key can actually call rather than
+trusting a blog post — `gemini-2.5-flash` is already retired and returns 404
+pointing at `gemini-3.6-flash`.
 
 ```bash
 review doctor          # provider, model, key, rate limit — check before running
