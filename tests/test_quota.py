@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from agentgate.quota import (
+from loupe.quota import (
     DailyQuotaExhausted,
     classify,
     is_rate_limit,
@@ -92,8 +92,8 @@ def test_raise_if_terminal_only_fires_on_daily():
 def test_verify_propagates_quota_instead_of_rejecting_everything():
     """A quota failure inside the gate is not evidence about the findings.
     Silently rejecting them produces a clean review that never happened."""
-    import agentgate.nodes.verify as verify_mod
-    from agentgate.schema import Finding
+    import loupe.nodes.verify as verify_mod
+    from loupe.schema import Finding
 
     class _Boom:
         def with_structured_output(self, *a, **k):

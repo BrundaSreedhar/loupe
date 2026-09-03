@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from agentgate.safety import REDACTION, redact_text, scan_text
+from loupe.safety import REDACTION, redact_text, scan_text
 
 REAL_KEYS = [
     ("AWS", 'aws_key = "AKIAIOSFODNN7EXAMPLE"'),
@@ -88,10 +88,10 @@ def test_ordinary_comments_are_not_flagged_as_injection(line):
 def test_a_planted_key_never_reaches_the_model(monkeypatch):
     """End to end through the real graph: the reviewer must be shown a redacted
     file, not the credential."""
-    import agentgate.nodes.prepare as prepare_mod
-    import agentgate.nodes.specialists as spec_mod
-    from agentgate.prompts.specialists import context_message
-    from agentgate.schema import FindingBatch
+    import loupe.nodes.prepare as prepare_mod
+    import loupe.nodes.specialists as spec_mod
+    from loupe.prompts.specialists import context_message
+    from loupe.schema import FindingBatch
     from evals.corpus import build_request
 
     seen: list[str] = []
@@ -114,7 +114,7 @@ def test_a_planted_key_never_reaches_the_model(monkeypatch):
     leaked = 'def connect():\n    key = "AKIAIOSFODNN7EXAMPLE"\n    return key\n'
     request = build_request("db.py", original, leaked, "leak")
 
-    from agentgate.runner import run_review
+    from loupe.runner import run_review
 
     run_review(request, mode="single", verify=False)
 
@@ -130,8 +130,8 @@ def test_a_planted_key_never_reaches_the_model(monkeypatch):
 def test_source_is_delimited_and_declared_as_data():
     """The prompt half of the defence. A scanner can be evaded; this is what makes
     evasion not work."""
-    from agentgate.prompts.specialists import SHARED_SYSTEM, context_message
-    from agentgate.schema import FileContext, ReviewRequest
+    from loupe.prompts.specialists import SHARED_SYSTEM, context_message
+    from loupe.schema import FileContext, ReviewRequest
 
     ctx = {"a.py": FileContext(
         path="a.py",

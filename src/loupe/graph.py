@@ -71,7 +71,7 @@ def route_verify(state: ReviewState):
     # One call per file: the source is sent once instead of once per finding, which
     # is both the call-count and the token win. The cost is that the verifier sees
     # every claim on a file at once, so judgements are no longer strictly
-    # independent — REVIEWER_VERIFY_MODE=per_finding buys that back, and the eval
+    # independent — LOUPE_VERIFY_MODE=per_finding buys that back, and the eval
     # harness can price the difference.
     return [
         Send("verify", {"path": path, "findings": fs, "source": sources.get(path, "")})

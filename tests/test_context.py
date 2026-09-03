@@ -1,6 +1,6 @@
-from agentgate.context import render_numbered
-from agentgate.nodes._common import drop_ungrounded, valid_lines
-from agentgate.schema import FileContext, Finding
+from loupe.context import render_numbered
+from loupe.nodes._common import drop_ungrounded, valid_lines
+from loupe.schema import FileContext, Finding
 
 SRC = "\n".join(f"line {i}" for i in range(1, 11))
 

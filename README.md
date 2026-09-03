@@ -1,4 +1,4 @@
-# agentgate
+# loupe
 
 A code reviewer that is quiet unless it has something to say.
 
@@ -8,8 +8,8 @@ by a separate pass that is told to reject. What survives is what you see.
 
 ```bash
 ./install.sh
-agentgate doctor
-agentgate local HEAD~1
+loupe doctor
+loupe local HEAD~1
 ```
 
 ## Architecture
@@ -52,7 +52,7 @@ agentgate local HEAD~1
                                              (dry run unless --post)
 ```
 
-`agentgate graph` prints the compiled version, which is the authoritative one.
+`loupe graph` prints the compiled version, which is the authoritative one.
 
 Three ordering decisions carry weight:
 
@@ -70,17 +70,17 @@ effect, and the eval harness runs this graph thousands of times.
 ## Using it
 
 ```bash
-agentgate local HEAD~1           # a local diff
-agentgate local --staged         # the index
-agentgate local --mode single    # one generalist instead of four
-agentgate local --no-verify      # skip the gate, for measurement
-agentgate local HEAD~1 -v        # show what each stage did
+loupe local HEAD~1           # a local diff
+loupe local --staged         # the index
+loupe local --mode single    # one generalist instead of four
+loupe local --no-verify      # skip the gate, for measurement
+loupe local HEAD~1 -v        # show what each stage did
 
-agentgate pr owner/repo 123      # a pull request — dry run
-agentgate pr owner/repo 123 --post   # ...and publish, after confirming
+loupe pr owner/repo 123      # a pull request — dry run
+loupe pr owner/repo 123 --post   # ...and publish, after confirming
 ```
 
-`agentgate local <ref>` diffs a ref against your working tree, so `HEAD` means
+`loupe local <ref>` diffs a ref against your working tree, so `HEAD` means
 uncommitted changes and `HEAD~1` means the last commit plus anything uncommitted.
 
 Findings carry a concrete failure scenario, and a replacement patch where the
@@ -92,11 +92,11 @@ says what it skipped.
 
 ```bash
 cd your-project
-agentgate init
+loupe init
 ```
 
 ```
-.agentgate/
+.loupe/
   rules.md      review guidance for this codebase
   ignore        extra paths to skip, one glob per line
   config.env    settings, read before the global config
@@ -111,8 +111,8 @@ defects a codebase produces repeatedly are the ones only its maintainers can nam
 - Money is always integer cents. A float touching a currency value is a bug.
 ```
 
-Configuration is read from `.agentgate/config.env`, then a nearby `.env`, then
-`~/.config/agentgate/.env`. A variable set in your shell always wins.
+Configuration is read from `.loupe/config.env`, then a nearby `.env`, then
+`~/.config/loupe/.env`. A variable set in your shell always wins.
 
 ## Measuring it
 
@@ -143,7 +143,7 @@ mixed two models — both have happened, and both looked like clean measurements
 ## Providers and tracing
 
 Runs on Google Gemini, Anthropic Claude, or a local model through Ollama, selected
-with `REVIEWER_PROVIDER`. A local model can also be configured as a fallback for
+with `LOUPE_PROVIDER`. A local model can also be configured as a fallback for
 when a hosted quota runs out; any review that used it says so, because a review
 answered by a smaller model is a different artefact.
 

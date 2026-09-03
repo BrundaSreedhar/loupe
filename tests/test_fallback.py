@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from agentgate.fallback import LocalFallback, reset_usage, usage
+from loupe.fallback import LocalFallback, reset_usage, usage
 from tests.test_quota import DAILY, PER_MINUTE
 
 
@@ -76,8 +76,8 @@ def test_no_fallback_when_primary_succeeds():
 def test_fallback_is_reported_as_an_error_not_a_footnote(monkeypatch):
     """A review answered by a small local model is a different artefact. If that
     is not on the output, the numbers from it look like the real thing."""
-    import agentgate.fallback as fb
-    import agentgate.runner as runner
+    import loupe.fallback as fb
+    import loupe.runner as runner
 
     monkeypatch.setattr(runner, "usage", lambda: {"verify", "specialist:security"})
 
@@ -87,7 +87,7 @@ def test_fallback_is_reported_as_an_error_not_a_footnote(monkeypatch):
                     "problems": [], "contexts": {}}
 
     monkeypatch.setattr(runner, "_graph", lambda: _Graph())
-    from agentgate.schema import ReviewRequest
+    from loupe.schema import ReviewRequest
 
     result = runner.run_review(ReviewRequest(source="local", ref="r"))
     fallback = [p for p in result.problems if p.stage == "fallback"]
@@ -98,23 +98,23 @@ def test_fallback_is_reported_as_an_error_not_a_footnote(monkeypatch):
 
 
 def test_model_provider_mismatch_is_corrected(monkeypatch, isolated_config):
-    """REVIEWER_MODEL left set to a Gemini model while the provider is ollama
+    """LOUPE_MODEL left set to a Gemini model while the provider is ollama
     otherwise asks Ollama for 'gemini-3.5-flash' and fails much later."""
-    monkeypatch.setenv("REVIEWER_PROVIDER", "ollama")
-    monkeypatch.setenv("REVIEWER_MODEL", "gemini-3.5-flash")
+    monkeypatch.setenv("LOUPE_PROVIDER", "ollama")
+    monkeypatch.setenv("LOUPE_MODEL", "gemini-3.5-flash")
     assert isolated_config().MODEL == "qwen2:7b"
 
-    monkeypatch.setenv("REVIEWER_MODEL", "qwen2:7b-32k")
+    monkeypatch.setenv("LOUPE_MODEL", "qwen2:7b-32k")
     assert isolated_config().MODEL == "qwen2:7b-32k"
 
 
 def test_verifier_can_use_a_different_model_from_the_reviewers(monkeypatch, isolated_config):
     """Google's daily cap is per project AND per model, so pointing roles at
     different models gives each its own allowance instead of sharing one."""
-    monkeypatch.setenv("REVIEWER_PROVIDER", "google")
-    monkeypatch.setenv("REVIEWER_MODEL", "gemini-3.5-flash")
-    monkeypatch.setenv("REVIEWER_VERIFIER_MODEL", "gemini-3.6-flash")
-    monkeypatch.setenv("REVIEWER_CHEAP_MODEL", "gemini-3.5-flash-lite")
+    monkeypatch.setenv("LOUPE_PROVIDER", "google")
+    monkeypatch.setenv("LOUPE_MODEL", "gemini-3.5-flash")
+    monkeypatch.setenv("LOUPE_VERIFIER_MODEL", "gemini-3.6-flash")
+    monkeypatch.setenv("LOUPE_CHEAP_MODEL", "gemini-3.5-flash-lite")
     monkeypatch.setenv("GOOGLE_API_KEY", "dummy")
 
     config = isolated_config()
@@ -127,10 +127,10 @@ def test_verifier_can_use_a_different_model_from_the_reviewers(monkeypatch, isol
 
 def test_verifier_model_defaults_to_the_main_model(monkeypatch, isolated_config):
     """Must not depend on whether the person running the tests has a verifier
-    model configured in their own ~/.config/agentgate/.env."""
-    monkeypatch.setenv("REVIEWER_PROVIDER", "google")
-    monkeypatch.setenv("REVIEWER_MODEL", "gemini-3.5-flash")
-    monkeypatch.delenv("REVIEWER_VERIFIER_MODEL", raising=False)
+    model configured in their own ~/.config/loupe/.env."""
+    monkeypatch.setenv("LOUPE_PROVIDER", "google")
+    monkeypatch.setenv("LOUPE_MODEL", "gemini-3.5-flash")
+    monkeypatch.delenv("LOUPE_VERIFIER_MODEL", raising=False)
 
     config = isolated_config()
     assert config.VERIFIER_MODEL == config.MODEL == "gemini-3.5-flash"

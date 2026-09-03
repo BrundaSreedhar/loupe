@@ -14,15 +14,15 @@ is about ten calls, so a single model buys roughly **two reviews a day**.
 
 The cap being per model is the useful part: the quota id is
 `GenerateRequestsPerDayPerProjectPerModel`, so pointing roles at different models
-gives each its own allowance. `REVIEWER_MODEL`, `REVIEWER_VERIFIER_MODEL` and
-`REVIEWER_CHEAP_MODEL` are separate for exactly this reason.
+gives each its own allowance. `LOUPE_MODEL`, `LOUPE_VERIFIER_MODEL` and
+`LOUPE_CHEAP_MODEL` are separate for exactly this reason.
 
 Available models change often. List what this key can actually call rather than
 trusting a blog post — `gemini-2.5-flash` is already retired and returns 404
 pointing at `gemini-3.6-flash`.
 
 ```bash
-agentgate doctor          # provider, model, key, rate limit — check before running
+loupe doctor          # provider, model, key, rate limit — check before running
 ```
 
 Ollama is installed locally with `qwen2:7b`, and is wired in as a third provider.
@@ -32,8 +32,8 @@ disagreeing, a broken guard — and a small local model would have caught all of
 them for free and without limit.
 
 ```bash
-REVIEWER_PROVIDER=ollama agentgate local HEAD~1     # run entirely on the local model
-REVIEWER_FALLBACK_MODEL=qwen2:7b                 # or use it only when quota runs out
+LOUPE_PROVIDER=ollama loupe local HEAD~1     # run entirely on the local model
+LOUPE_FALLBACK_MODEL=qwen2:7b                 # or use it only when quota runs out
 ```
 
 `qwen2:7b` needs `method="json_schema"` for structured output; `function_calling`
@@ -49,31 +49,31 @@ severity, and the eval refuses to report numbers from a run that mixed models.
 off-by-one it reported a plausible but different issue and missed the seeded bug.
 It tells you the pipeline works, not whether the reviewer is good.
 
-`REVIEWER_MODEL` applies to whichever provider is active. A Gemini model name left
+`LOUPE_MODEL` applies to whichever provider is active. A Gemini model name left
 set while the provider is ollama is detected and corrected with a warning, but
 comment it out rather than relying on that.
 
 ## Commands
 
-`./install.sh` puts `agentgate` on the PATH via `uv tool install --editable`, with
-settings in `~/.config/agentgate/.env`. Inside this checkout `.venv/bin/agentgate`
+`./install.sh` puts `loupe` on the PATH via `uv tool install --editable`, with
+settings in `~/.config/loupe/.env`. Inside this checkout `.venv/bin/loupe`
 works too; they are the same code because the install is editable.
 
 ```bash
-agentgate local HEAD~1                  # review a local diff
-agentgate local --mode single           # one reviewer instead of four (1 call)
-agentgate local --no-verify             # skip the checking pass
-agentgate pr owner/repo 123             # dry run; --post writes to GitHub
-agentgate graph                         # print the compiled graph
-agentgate local HEAD~1 -v               # show what each stage did
-agentgate local HEAD~1 -vv              # add debug;  -vvv adds HTTP traffic
+loupe local HEAD~1                  # review a local diff
+loupe local --mode single           # one reviewer instead of four (1 call)
+loupe local --no-verify             # skip the checking pass
+loupe pr owner/repo 123             # dry run; --post writes to GitHub
+loupe graph                         # print the compiled graph
+loupe local HEAD~1 -v               # show what each stage did
+loupe local HEAD~1 -vv              # add debug;  -vvv adds HTTP traffic
 python -m evals.run_eval main --source ~/repo --n-defect 6 --n-clean 6
 python -m evals.run_eval main --source ~/repo --dry-run    # corpus only, no calls
 pytest -q
 ruff check src evals tests
 ```
 
-`agentgate local` diffs a ref against the **working tree**, so `HEAD` means
+`loupe local` diffs a ref against the **working tree**, so `HEAD` means
 uncommitted changes and `HEAD~1` means the last commit plus anything uncommitted.
 
 ## How to work here
@@ -143,7 +143,7 @@ change that default.
 
 ## Per-project config
 
-A repo under review may carry `.agentgate/` with `config.env`, `rules.md` and
+A repo under review may carry `.loupe/` with `config.env`, `rules.md` and
 `ignore`. Rules go in the **role message**, never the system prompt — putting
 them in the prefix would give each reviewer a different cached prefix and defeat
 the warm. They are labelled as maintainer configuration, because they sit in the
@@ -152,7 +152,7 @@ same prompt as untrusted source.
 ## Layout
 
 ```
-src/agentgate/
+src/loupe/
   cli.py          commands
   runner.py       one entry point; the CLI and the eval both use it
   graph.py        node wiring

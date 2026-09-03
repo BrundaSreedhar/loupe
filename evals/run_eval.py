@@ -19,10 +19,10 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from agentgate.config import MODEL, PROVIDER, RPM
-from agentgate.quota import DailyQuotaExhausted
-from agentgate.runner import run_review
-from agentgate.schema import ReviewRequest
+from loupe.config import MODEL, PROVIDER, RPM
+from loupe.quota import DailyQuotaExhausted
+from loupe.runner import run_review
+from loupe.schema import ReviewRequest
 
 from .corpus import Case, build
 from .scoring import Report, score_case, spread
@@ -98,7 +98,7 @@ def check_did_work(results: dict[str, list[Report]]) -> bool:
                 console.print(
                     f"[red]{arm} run {i}: every case failed — no result was "
                     "produced at all.[/red] Common cause: the daily quota is "
-                    "exhausted. Re-run `agentgate doctor` and check your limits."
+                    "exhausted. Re-run `loupe doctor` and check your limits."
                 )
                 ok = False
             elif r.fell_back:
@@ -106,7 +106,7 @@ def check_did_work(results: dict[str, list[Report]]) -> bool:
                     f"[red]{arm} run {i}: {r.fell_back} of {len(r.scores)} cases "
                     "fell back to the local model mid-run.[/red] These numbers mix "
                     "two models and measure neither. Re-run when quota resets, or "
-                    "set REVIEWER_PROVIDER=ollama to measure the local model on "
+                    "set LOUPE_PROVIDER=ollama to measure the local model on "
                     "its own."
                 )
                 ok = False

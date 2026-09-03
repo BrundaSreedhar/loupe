@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from statistics import mean, pstdev
 
-from agentgate.schema import ReviewResult
+from loupe.schema import ReviewResult
 
 from .corpus import Case
 

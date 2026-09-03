@@ -22,13 +22,13 @@ from langchain_core.rate_limiters import InMemoryRateLimiter
 # Three places, most specific first. Nothing overrides anything already set, so
 # an env var in the shell always wins.
 #
-#   0. .agentgate/config.env in the current directory or above — a project's own
+#   0. .loupe/config.env in the current directory or above — a project's own
 #      settings, travelling with the checkout.
 #   1. cwd and above — a plain .env, same idea.
 #   2. the reviewer's own checkout — for `--repo-root ~/elsewhere`, since
 #      python-dotenv only ever walks up from the working directory. Present only
 #      for an editable install; a normal install puts __file__ in site-packages.
-#   3. ~/.config/agentgate/.env — the one that makes `agentgate` work from anywhere
+#   3. ~/.config/loupe/.env — the one that makes `loupe` work from anywhere
 #      once it is installed as a command rather than run out of the checkout.
 USER_CONFIG = Path(
     os.getenv("XDG_CONFIG_HOME", Path.home() / ".config")
@@ -45,7 +45,7 @@ for _candidate in (Path(__file__).resolve().parents[2] / ".env", USER_CONFIG):
     if _candidate.is_file():
         load_dotenv(_candidate, override=False)
 
-PROVIDER = os.getenv("REVIEWER_PROVIDER", "google").lower()
+PROVIDER = os.getenv("LOUPE_PROVIDER", "google").lower()
 
 _DEFAULT_MODEL = {
     "google": "gemini-3.5-flash",
@@ -66,17 +66,17 @@ _KEY_ENV = {
 # A local model to fall back to when the day's quota is exhausted. Empty disables
 # it, and the review fails instead — which is the right default for anything whose
 # output you intend to trust or measure.
-FALLBACK_MODEL = os.getenv("REVIEWER_FALLBACK_MODEL", "")
+FALLBACK_MODEL = os.getenv("LOUPE_FALLBACK_MODEL", "")
 OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 # Local models are slower per call but have no per-minute cap.
-OLLAMA_NUM_CTX = int(os.getenv("REVIEWER_OLLAMA_NUM_CTX", "16384"))
+OLLAMA_NUM_CTX = int(os.getenv("LOUPE_OLLAMA_NUM_CTX", "16384"))
 
 if PROVIDER not in _DEFAULT_MODEL:
-    raise ValueError(f"REVIEWER_PROVIDER must be one of {sorted(_DEFAULT_MODEL)}, got {PROVIDER!r}")
+    raise ValueError(f"LOUPE_PROVIDER must be one of {sorted(_DEFAULT_MODEL)}, got {PROVIDER!r}")
 
 # Model names are recognisable by prefix, which is enough to catch the common
-# misconfiguration: REVIEWER_MODEL left set to one provider's model while
-# REVIEWER_PROVIDER points at another. Without this, switching to a local model
+# misconfiguration: LOUPE_MODEL left set to one provider's model while
+# LOUPE_PROVIDER points at another. Without this, switching to a local model
 # silently asks Ollama for "gemini-3.5-flash" and fails somewhere much later.
 _MODEL_PREFIX = {"google": ("gemini",), "anthropic": ("claude",)}
 
@@ -94,7 +94,7 @@ def _resolve_model(env_var: str, defaults: dict[str, str]) -> str:
         return defaults[PROVIDER]
     if (other := _belongs_to_another_provider(configured)) is not None:
         logging.getLogger(__name__).warning(
-            "%s=%r looks like a %s model but REVIEWER_PROVIDER=%s; using %r instead. "
+            "%s=%r looks like a %s model but LOUPE_PROVIDER=%s; using %r instead. "
             "Set %s explicitly if that was deliberate.",
             env_var, configured, other, PROVIDER, defaults[PROVIDER], env_var,
         )
@@ -102,36 +102,36 @@ def _resolve_model(env_var: str, defaults: dict[str, str]) -> str:
     return configured
 
 
-MODEL = _resolve_model("REVIEWER_MODEL", _DEFAULT_MODEL)
-CHEAP_MODEL = _resolve_model("REVIEWER_CHEAP_MODEL", _CHEAP_MODEL)
+MODEL = _resolve_model("LOUPE_MODEL", _DEFAULT_MODEL)
+CHEAP_MODEL = _resolve_model("LOUPE_CHEAP_MODEL", _CHEAP_MODEL)
 
 # Google's free-tier daily cap is per project *and per model* — the quota id in
 # the 429 body is GenerateRequestsPerDayPerProjectPerModel. So pointing different
 # roles at different models gives each its own daily allowance instead of all
 # three draining one. Defaults to MODEL, i.e. no change unless you opt in.
-VERIFIER_MODEL = _resolve_model("REVIEWER_VERIFIER_MODEL", dict.fromkeys(_DEFAULT_MODEL, MODEL))
+VERIFIER_MODEL = _resolve_model("LOUPE_VERIFIER_MODEL", dict.fromkeys(_DEFAULT_MODEL, MODEL))
 
 # Requests per minute, client-side. Google's free tier is measured in tens of RPM,
 # and one multi-agent review is ~8-12 calls, so without this an eval run trips the
 # quota within the first minute. 0 disables the limiter.
-RPM = int(os.getenv("REVIEWER_RPM", "10" if PROVIDER == "google" else "0"))
+RPM = int(os.getenv("LOUPE_RPM", "10" if PROVIDER == "google" else "0"))
 
 # Gemini thinking budgets: -1 lets the model decide, 0 turns thinking off,
 # a positive integer caps it. Some models reject 0 — override if yours does.
-THINKING_HIGH = int(os.getenv("REVIEWER_THINKING_HIGH", "-1"))
-THINKING_LOW = int(os.getenv("REVIEWER_THINKING_LOW", "0"))
+THINKING_HIGH = int(os.getenv("LOUPE_THINKING_HIGH", "-1"))
+THINKING_LOW = int(os.getenv("LOUPE_THINKING_LOW", "0"))
 
 # Context budget, in tokens, for a single file's source window.
-FILE_TOKEN_BUDGET = int(os.getenv("REVIEWER_FILE_TOKEN_BUDGET", "12000"))
+FILE_TOKEN_BUDGET = int(os.getenv("LOUPE_FILE_TOKEN_BUDGET", "12000"))
 # Total across all files in one review. Past this, files are dropped by rank
 # and the report says so rather than quietly reviewing half the change.
-REVIEW_TOKEN_BUDGET = int(os.getenv("REVIEWER_REVIEW_TOKEN_BUDGET", "120000"))
+REVIEW_TOKEN_BUDGET = int(os.getenv("LOUPE_REVIEW_TOKEN_BUDGET", "120000"))
 # Lines of context kept either side of a hunk when a file doesn't fit whole.
-WINDOW_PADDING = int(os.getenv("REVIEWER_WINDOW_PADDING", "40"))
+WINDOW_PADDING = int(os.getenv("LOUPE_WINDOW_PADDING", "40"))
 # Findings shown. A review with 8 findings gets read; one with 40 gets closed.
-MAX_REPORTED = int(os.getenv("REVIEWER_MAX_REPORTED", "12"))
+MAX_REPORTED = int(os.getenv("LOUPE_MAX_REPORTED", "12"))
 # Two findings this close on the same file are candidates for merging.
-MERGE_LINE_WINDOW = int(os.getenv("REVIEWER_MERGE_LINE_WINDOW", "3"))
+MERGE_LINE_WINDOW = int(os.getenv("LOUPE_MERGE_LINE_WINDOW", "3"))
 
 SPECIALIST_ROLES = ("security", "correctness", "performance", "maintainability")
 
@@ -141,7 +141,7 @@ SPECIALIST_ROLES = ("security", "correctness", "performance", "maintainability")
 #   block  — refuse the whole review
 #   warn   — report it and send anyway. Never a good idea on a free tier whose
 #            terms permit training on inputs.
-ON_SECRET = os.getenv("REVIEWER_ON_SECRET", "redact").lower()
+ON_SECRET = os.getenv("LOUPE_ON_SECRET", "redact").lower()
 
 
 def credentials_present() -> bool:
@@ -159,15 +159,15 @@ def key_env_var() -> str:
 # Burst allowance. The fan-out is genuinely concurrent, so a bucket of 1 turns
 # four parallel reviewers into four serial ones spaced 60/RPM apart — the average
 # rate is respected either way, but the latency is four times worse for nothing.
-BURST = int(os.getenv("REVIEWER_BURST", str(len(SPECIALIST_ROLES))))
+BURST = int(os.getenv("LOUPE_BURST", str(len(SPECIALIST_ROLES))))
 
 # Warming a prefix costs one blocking call before the fan-out can start. Below
 # this size the cache saves less than the extra round-trip costs.
-WARM_MIN_TOKENS = int(os.getenv("REVIEWER_WARM_MIN_TOKENS", "4000"))
+WARM_MIN_TOKENS = int(os.getenv("LOUPE_WARM_MIN_TOKENS", "4000"))
 
 # "per_file" verifies all of a file's findings in one call, "per_finding" uses one
 # call each. Per-file is far cheaper; per-finding keeps the judgements independent.
-VERIFY_MODE = os.getenv("REVIEWER_VERIFY_MODE", "per_file")
+VERIFY_MODE = os.getenv("LOUPE_VERIFY_MODE", "per_file")
 
 
 @cache

@@ -56,10 +56,10 @@ def _suggest(ref: str, root: str) -> str:
         f"\nThis repository has only {n} commit{'s' if n != 1 else ''}, "
         f"so there is no {ref} to diff against.\n\n"
         "Try one of:\n"
-        "  agentgate local HEAD                       review uncommitted changes\n"
-        "  agentgate local --staged                   review what is staged\n"
-        "  agentgate local HEAD~1 --repo-root ~/repo  review a repo with history\n"
-        f"  agentgate local {_empty_tree(root)}\n"
+        "  loupe local HEAD                       review uncommitted changes\n"
+        "  loupe local --staged                   review what is staged\n"
+        "  loupe local HEAD~1 --repo-root ~/repo  review a repo with history\n"
+        f"  loupe local {_empty_tree(root)}\n"
         "                                          review the first commit whole"
     )
 

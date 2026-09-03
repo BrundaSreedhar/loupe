@@ -25,7 +25,7 @@ def _preflight() -> None:
         console.print(
             f"[red]No {PROVIDER} credential.[/red] Set {key_env_var()} in the "
             "reviewer's .env (copy .env.example) or export it in your shell.\n"
-            "[dim]Switch providers with REVIEWER_PROVIDER=google|anthropic.[/dim]"
+            "[dim]Switch providers with LOUPE_PROVIDER=google|anthropic.[/dim]"
         )
         raise typer.Exit(1)
 
@@ -43,8 +43,8 @@ def _explain_nothing(request, target: str) -> None:
     if not request.files:
         console.print(f"[yellow]No changes found in {target}.[/yellow]")
         console.print(
-            "[dim]`agentgate local <ref>` diffs a ref against your working tree, so "
-            "HEAD means uncommitted changes only. Try `agentgate local HEAD~1` for "
+            "[dim]`loupe local <ref>` diffs a ref against your working tree, so "
+            "HEAD means uncommitted changes only. Try `loupe local HEAD~1` for "
             "the last commit, or --staged for the index.[/dim]"
         )
         return
@@ -146,7 +146,7 @@ def init(
     repo_root: str = typer.Option(".", "--repo-root"),
     force: bool = typer.Option(False, "--force", help="Overwrite existing files."),
 ) -> None:
-    """Create a .agentgate/ folder so this repo carries its own review settings."""
+    """Create a .loupe/ folder so this repo carries its own review settings."""
     from .project import scaffold
 
     directory, written, skipped = scaffold(repo_root, force=force)

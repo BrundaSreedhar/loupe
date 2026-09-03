@@ -13,7 +13,7 @@ import re
 
 import pytest
 
-from agentgate.schema import (
+from loupe.schema import (
     FindingBatch,
     IndexedVerdict,
     MergedFinding,
@@ -115,10 +115,10 @@ def wired(monkeypatch):
     merge = _FakeLLM(merge_payload)
     verify = _FakeLLM(verify_payload)
 
-    import agentgate.nodes.dedupe as dedupe_mod
-    import agentgate.nodes.prepare as prepare_mod
-    import agentgate.nodes.specialists as spec_mod
-    import agentgate.nodes.verify as verify_mod
+    import loupe.nodes.dedupe as dedupe_mod
+    import loupe.nodes.prepare as prepare_mod
+    import loupe.nodes.specialists as spec_mod
+    import loupe.nodes.verify as verify_mod
 
     monkeypatch.setattr(spec_mod, "specialist_llm", lambda: spec)
     monkeypatch.setattr(prepare_mod, "specialist_llm", lambda: spec)
@@ -133,7 +133,7 @@ def request_fixture():
 
 
 def test_multi_mode_runs_four_reviewers_and_keeps_all_findings(wired, request_fixture):
-    from agentgate.runner import run_review
+    from loupe.runner import run_review
 
     result = run_review(request_fixture, mode="multi", verify=False)
     roles = {f.produced_by for f in result.raw}
@@ -142,7 +142,7 @@ def test_multi_mode_runs_four_reviewers_and_keeps_all_findings(wired, request_fi
 
 
 def test_single_mode_runs_one_reviewer(wired, request_fixture):
-    from agentgate.runner import run_review
+    from loupe.runner import run_review
 
     result = run_review(request_fixture, mode="single", verify=False)
     assert len(result.raw) == 1
@@ -150,7 +150,7 @@ def test_single_mode_runs_one_reviewer(wired, request_fixture):
 
 
 def test_dedupe_merges_across_reviewers(wired, request_fixture):
-    from agentgate.runner import run_review
+    from loupe.runner import run_review
 
     result = run_review(request_fixture, mode="multi", verify=False)
     # line 4 pair merges into one; line 20 pair merges into one.
@@ -158,7 +158,7 @@ def test_dedupe_merges_across_reviewers(wired, request_fixture):
 
 
 def test_gate_removes_rejected_findings(wired, request_fixture):
-    from agentgate.runner import run_review
+    from loupe.runner import run_review
 
     result = run_review(request_fixture, mode="multi", verify=True)
     assert result.verdicts, "the gate never ran"
@@ -172,7 +172,7 @@ def test_gate_removes_rejected_findings(wired, request_fixture):
 def test_verify_spans_carry_finding_ids(wired, request_fixture):
     """Without them the verify fan-out is a set of anonymous sibling spans."""
     _, _, verify = wired
-    from agentgate.runner import run_review
+    from loupe.runner import run_review
 
     run_review(request_fixture, mode="multi", verify=True)
     assert verify.calls
@@ -181,7 +181,7 @@ def test_verify_spans_carry_finding_ids(wired, request_fixture):
 
 def test_warm_cache_skipped_in_single_mode(wired, request_fixture):
     spec, _, _ = wired
-    from agentgate.runner import run_review
+    from loupe.runner import run_review
 
     run_review(request_fixture, mode="single", verify=False)
     assert not any(c["config"].get("run_name") == "warm_cache" for c in spec.calls)
@@ -195,7 +195,7 @@ def test_warm_cache_skipped_when_prefix_is_too_small(wired, request_fixture):
     """Warming is a blocking call the fan-out waits on. On a small prefix it costs
     a round-trip to save less than one."""
     spec, _, _ = wired
-    from agentgate.runner import run_review
+    from loupe.runner import run_review
 
     run_review(request_fixture, mode="multi", verify=False)
     assert _warms(spec) == []
@@ -203,10 +203,10 @@ def test_warm_cache_skipped_when_prefix_is_too_small(wired, request_fixture):
 
 def test_warm_cache_runs_once_when_prefix_is_large(wired, request_fixture, monkeypatch):
     spec, _, _ = wired
-    import agentgate.nodes.prepare as prepare_mod
+    import loupe.nodes.prepare as prepare_mod
 
     monkeypatch.setattr(prepare_mod, "WARM_MIN_TOKENS", 0)
-    from agentgate.runner import run_review
+    from loupe.runner import run_review
 
     run_review(request_fixture, mode="multi", verify=False)
     assert len(_warms(spec)) == 1

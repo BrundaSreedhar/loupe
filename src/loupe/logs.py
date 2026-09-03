@@ -36,7 +36,7 @@ def setup_logging(verbosity: int = 0, console: Console | None = None) -> None:
     root.addHandler(handler)
     root.setLevel(logging.DEBUG if verbosity >= 2 else logging.INFO)
 
-    logging.getLogger("agentgate").setLevel(level)
+    logging.getLogger("loupe").setLevel(level)
     logging.getLogger("evals").setLevel(level)
 
     # At -vv you asked for everything, including the HTTP chatter.

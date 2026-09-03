@@ -1,9 +1,9 @@
-"""Per-project configuration in a `.agentgate/` folder.
+"""Per-project configuration in a `.loupe/` folder.
 
 A repository carries its own review settings the way it carries its own linter
 config, so a checkout is self-describing and settings travel with the code:
 
-    .agentgate/
+    .loupe/
       config.env    settings — same keys as .env
       rules.md      review guidance specific to this codebase
       ignore        extra paths to skip, one glob per line
@@ -20,12 +20,12 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-DIR_NAME = ".agentgate"
+DIR_NAME = ".loupe"
 MAX_RULES_CHARS = 8000
 
 
 def find_dir(start: Path | str) -> Path | None:
-    """Nearest `.agentgate/` at or above `start`."""
+    """Nearest `.loupe/` at or above `start`."""
     here = Path(start).resolve()
     for candidate in (here, *here.parents):
         found = candidate / DIR_NAME
@@ -105,13 +105,13 @@ CONFIG_TEMPLATE = """\
 # Settings for this repository only. Same keys as the global config, and read
 # before it — but a variable set in your shell still wins.
 
-# REVIEWER_MAX_REPORTED=8
-# REVIEWER_REVIEW_TOKEN_BUDGET=120000
+# LOUPE_MAX_REPORTED=8
+# LOUPE_REVIEW_TOKEN_BUDGET=120000
 """
 
 
 def scaffold(repo_root: Path | str, force: bool = False) -> tuple[Path, list[str], list[str]]:
-    """Create `.agentgate/` in a repository. Returns (dir, written, skipped)."""
+    """Create `.loupe/` in a repository. Returns (dir, written, skipped)."""
     directory = Path(repo_root).resolve() / DIR_NAME
     directory.mkdir(parents=True, exist_ok=True)
 

@@ -9,10 +9,10 @@ import pytest
 
 @pytest.fixture
 def isolated_config(monkeypatch, tmp_path):
-    """Reload `agentgate.config` without any .env file influencing the result.
+    """Reload `loupe.config` without any .env file influencing the result.
 
     Config reads three dotenv locations, one of which is the developer's own
-    ~/.config/agentgate/.env. Without this, a test asserting that a setting is
+    ~/.config/loupe/.env. Without this, a test asserting that a setting is
     unset passes or fails depending on what the person running it happens to have
     configured — which is how installing the tool broke the test suite.
 
@@ -20,7 +20,7 @@ def isolated_config(monkeypatch, tmp_path):
     """
     import dotenv
 
-    import agentgate.config as config
+    import loupe.config as config
 
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
     monkeypatch.setattr(config, "load_dotenv", lambda *a, **k: False, raising=False)

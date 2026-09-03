@@ -1,6 +1,6 @@
 import pytest
 
-from agentgate.adapters.diffparse import added_line_numbers, parse_unified_diff
+from loupe.adapters.diffparse import added_line_numbers, parse_unified_diff
 
 DIFF = """\
 diff --git a/src/app.py b/src/app.py
@@ -62,7 +62,7 @@ def test_missing_ref_reports_the_ref_not_a_wrong_cause(tmp_path):
     """A bad ref in a repo that has commits must not be blamed on 'no commits'."""
     import subprocess
 
-    from agentgate.adapters.local_git import GitError, load
+    from loupe.adapters.local_git import GitError, load
 
     for cmd in (
         ["git", "init", "-q", "-b", "main"],
@@ -83,7 +83,7 @@ def test_missing_ref_reports_the_ref_not_a_wrong_cause(tmp_path):
 def test_empty_repo_says_so(tmp_path):
     import subprocess
 
-    from agentgate.adapters.local_git import GitError, load
+    from loupe.adapters.local_git import GitError, load
 
     subprocess.run(
         ["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True, capture_output=True
@@ -112,7 +112,7 @@ def _init_repo(path, files: dict[str, str], message: str = "init") -> None:
 def test_single_commit_repo_explains_itself(tmp_path):
     """A one-commit repo has a HEAD, so the 'no commits' branch does not fire —
     the message must still say why HEAD~1 is unavailable."""
-    from agentgate.adapters.local_git import GitError, load
+    from loupe.adapters.local_git import GitError, load
 
     _init_repo(tmp_path, {"a.py": "x = 1\n"})
     with pytest.raises(GitError) as exc:
@@ -127,7 +127,7 @@ def test_empty_tree_ref_reviews_the_first_commit(tmp_path):
     a tree with no commit behind it, which a `^{commit}` check would reject."""
     import subprocess
 
-    from agentgate.adapters.local_git import load
+    from loupe.adapters.local_git import load
 
     _init_repo(tmp_path, {"a.py": "x = 1\ny = 2\n"})
     empty = subprocess.run(
