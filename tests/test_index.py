@@ -210,7 +210,7 @@ def test_a_called_definition_reaches_the_reviewer(tmp_path):
     request = _request(tmp_path, "app/handlers.py", HANDLERS)
     contexts, _ = build_contexts(request)
 
-    references, stats = _gather(request, contexts)
+    references, stats, _edges = _gather(request, contexts)
 
     assert [r.definition.path for r in references] == ["app/validators.py"]
     assert "id is required" in references[0].source
@@ -224,7 +224,7 @@ def test_an_unresolvable_call_is_counted_not_guessed(tmp_path):
     request = _request(tmp_path, "app/handlers.py", source)
     contexts, _ = build_contexts(request)
 
-    references, stats = _gather(request, contexts)
+    references, stats, _edges = _gather(request, contexts)
 
     assert references == []
     assert stats.unresolved >= 1
@@ -242,7 +242,7 @@ def test_a_credential_in_an_unchanged_file_is_redacted_before_sending(tmp_path):
     request = _request(tmp_path, "app/handlers.py", HANDLERS)
     contexts, _ = build_contexts(request)
 
-    references, stats = _gather(request, contexts)
+    references, stats, _edges = _gather(request, contexts)
 
     assert stats.secrets == 1
     assert "AKIAIOSFODNN7EXAMPLE" not in references[0].source
@@ -257,7 +257,7 @@ def test_blocking_on_secrets_leaves_the_definition_out_entirely(tmp_path):
     request = _request(tmp_path, "app/handlers.py", HANDLERS)
     contexts, _ = build_contexts(request)
 
-    references, stats = _gather(request, contexts, on_secret="block")  # noqa: S106
+    references, stats, _edges = _gather(request, contexts, on_secret="block")  # noqa: S106
 
     assert references == []
     assert stats.secrets == 1
@@ -268,7 +268,7 @@ def test_definitions_over_the_budget_are_reported_not_dropped_silently(tmp_path)
     request = _request(tmp_path, "app/handlers.py", HANDLERS)
     contexts, _ = build_contexts(request)
 
-    references, stats = _gather(request, contexts, token_budget=1)
+    references, stats, _edges = _gather(request, contexts, token_budget=1)
 
     assert references == []
     assert stats.over_budget == 1
@@ -280,7 +280,7 @@ def test_a_language_without_a_parser_here_gets_no_expansion(tmp_path):
     request = _request(tmp_path, "app/handlers.ts", "export const handle = (p) => validate(p);\n")
     contexts, _ = build_contexts(request)
 
-    references, stats = _gather(request, contexts)
+    references, stats, _edges = _gather(request, contexts)
 
     assert references == []
     assert stats.files_indexed == 0, "indexed a repository for a change it cannot parse"

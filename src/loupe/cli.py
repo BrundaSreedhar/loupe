@@ -105,11 +105,13 @@ def local(
         f"[dim]Reviewing {len(request.reviewable)} file(s) · mode={mode} · "
         f"{PROVIDER}/{MODEL}[/dim]"
     )
-    if verbose:
-        result = run_review(request, mode=mode, verify=not no_verify, remember=not fresh)
-    else:
-        with console.status("Reviewing…"):
-            result = run_review(request, mode=mode, verify=not no_verify, remember=not fresh)
+    result = run_review(
+        request, mode=mode, verify=not no_verify, remember=not fresh,
+        # A spinner reading "Reviewing…" for two minutes cannot tell a clean
+        # review apart from one where every stage failed quietly. Off for JSON:
+        # narration on stdout would be output nobody can parse.
+        progress=console if output == "text" else None,
+    )
     (render_json if output == "json" else render)(result, request, console)
 
 
@@ -139,13 +141,10 @@ def pr(
         raise typer.Exit(0)
 
     console.print(f"[dim]Reviewing {repo}#{number} · {len(request.reviewable)} file(s)[/dim]")
-    if verbose:
-        result = run_review(request, mode=mode, verify=not no_verify, run_name=f"{repo}#{number}")
-    else:
-        with console.status("Reviewing…"):
-            result = run_review(
-                request, mode=mode, verify=not no_verify, run_name=f"{repo}#{number}"
-            )
+    result = run_review(
+        request, mode=mode, verify=not no_verify, run_name=f"{repo}#{number}",
+        progress=console if output == "text" else None,
+    )
     (render_json if output == "json" else render)(result, request, console)
 
     if not post:

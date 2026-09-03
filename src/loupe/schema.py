@@ -272,6 +272,10 @@ class ReviewResult(BaseModel):
     verdicts: list[Verdict] = Field(default_factory=list)
     problems: list[Problem] = Field(default_factory=list)
     delta: object | None = None
+    # index.Edge — untyped for the same reason as `delta`: the module that
+    # defines it imports this one, and inverting that to gain an annotation is a
+    # worse trade than the annotation is worth.
+    edges: list[object] = Field(default_factory=list)
     usage: dict[str, float] = Field(default_factory=dict)
     # Kept apart from `usage`, which is flat counts and rates. Tokens are
     # structured — per model, and split by how the cache treated them.

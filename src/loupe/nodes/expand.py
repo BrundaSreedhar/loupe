@@ -33,7 +33,7 @@ def expand(state: ReviewState) -> dict:
         return {}
 
     try:
-        references, stats = gather(
+        references, stats, edges = gather(
             request,
             contexts,
             max_files=INDEX_MAX_FILES,
@@ -90,4 +90,4 @@ def expand(state: ReviewState) -> dict:
                    f"(over LOUPE_INDEX_TOKEN_BUDGET)",
         ))
 
-    return {"references": references, "problems": problems}
+    return {"references": references, "edges": edges, "problems": problems}

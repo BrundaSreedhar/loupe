@@ -13,7 +13,7 @@ from typing import Annotated, Literal, NotRequired
 
 from typing_extensions import TypedDict
 
-from .index import Reference
+from .index import Edge, Reference
 from .lint import LintIssue
 from .safety import SafetyIssue
 from .schema import FileContext, Finding, Problem, ReviewRequest, Verdict
@@ -28,6 +28,9 @@ class ReviewState(TypedDict):
     # Definitions the changed lines call, resolved from the repository on disk.
     # Part of the shared prompt prefix, so every reviewer sees the same list.
     references: NotRequired[list[Reference]]
+    # Every call from a changed line to a definition this repo owns — including
+    # the ones whose source the prompt left out. Drawn for the reader, not sent.
+    edges: NotRequired[list[Edge]]
 
     mode: Literal["single", "multi"]
     verify: bool

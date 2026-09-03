@@ -7,6 +7,7 @@ from typing import Literal
 
 from .fallback import reset_usage, usage
 from .graph import build_graph
+from .progress import reporter
 from .quota import raise_if_terminal
 from .schema import Finding, Problem, ReviewRequest, ReviewResult, TokenUsage, Verdict
 from .tokens import Meter, collect
@@ -28,6 +29,7 @@ def run_review(
     run_name: str | None = None,
     remember: bool = True,
     lint: bool | None = None,
+    progress=None,
 ) -> ReviewResult:
     reset_usage()
     # Passed in the config rather than used as a context manager: the reviewers
@@ -36,7 +38,7 @@ def run_review(
     # to rely on across a thread pool.
     meter = Meter()
     try:
-        final = _invoke(request, mode, verify, run_name, remember, lint, meter)
+        final = _invoke(request, mode, verify, run_name, remember, lint, meter, progress)
     except Exception as exc:  # noqa: BLE001 — re-raised immediately; this only
         # decides which exception the caller sees.
         # A daily cap has to arrive as DailyQuotaExhausted whichever node hit it.
@@ -49,7 +51,7 @@ def run_review(
     return _assemble(request, mode, verify, final, collect(meter))
 
 
-def _invoke(request, mode, verify, run_name, remember, lint, meter):
+def _invoke(request, mode, verify, run_name, remember, lint, meter, progress=None):
     return _graph().invoke(
         {
             "request": request,
@@ -79,7 +81,7 @@ def _invoke(request, mode, verify, run_name, remember, lint, meter):
             "recursion_limit": 100,
             # Every model call in the run reports its usage here, retries and
             # fallbacks included.
-            "callbacks": [meter],
+            "callbacks": [meter, *reporter(progress)],
         },
     )
 
@@ -95,6 +97,7 @@ def _assemble(
     verdicts: list[Verdict] = final.get("verdicts") or []
     accepted: list[Finding] = final.get("accepted") or []
     delta = final.get("delta")
+    edges = list(final.get("edges") or [])
     problems: list[Problem] = list(final.get("problems") or [])
     fell_back = usage()
     if fell_back:
@@ -119,6 +122,7 @@ def _assemble(
         verdicts=verdicts,
         problems=problems,
         delta=delta,
+        edges=edges,
         usage={
             "raw_count": len(raw),
             "merged_count": len(merged),

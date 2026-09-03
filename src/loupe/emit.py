@@ -53,6 +53,90 @@ def render_problems(result: ReviewResult, console: Console) -> None:
         console.print(Padding(line, (0, 0, 0, 4)))
 
 
+def render_rejected(result: ReviewResult, console: Console, limit: int = 4) -> None:
+    """What the gate threw away, and why.
+
+    Without this the report is a dead end: "1 merged -> 0 confirmed" says
+    something was found and discarded, and the reasoning that discarded it sits
+    unread in the result. A rejection is usually right, and it is always the most
+    interesting thing on screen when nothing was reported — it is either the gate
+    doing its job or the gate being wrong, and you cannot tell which without
+    seeing it.
+    """
+    if not result.verified:
+        return
+    accepted = {f.id for f in result.accepted}
+    verdicts = {v.finding_id: v for v in result.verdicts}
+    verdicts.update({v.finding_id: v for v in getattr(result, "consensus", []) or []})
+    rejected = [
+        (f, verdicts[f.id])
+        for f in result.merged
+        if f.id not in accepted and f.id in verdicts and verdicts[f.id].status == "REJECTED"
+    ]
+    if not rejected:
+        return
+
+    console.print()
+    word = "finding" if len(rejected) == 1 else "findings"
+    console.print(f"  [bold]The gate rejected {len(rejected)} {word}[/bold]")
+    for finding, verdict in rejected[:limit]:
+        head = Text("  ")
+        head.append(f"{finding.file}:{finding.line}", style="dim")
+        head.append("  ")
+        head.append(finding.summary)
+        console.print(head)
+        console.print(Padding(Text(verdict.reasoning, style="dim"), (0, 0, 0, 4)))
+        console.print()
+    if len(rejected) > limit:
+        console.print(f"  [dim]...and {len(rejected) - limit} more[/dim]")
+
+
+def render_changes(result: ReviewResult, console: Console, limit: int = 12) -> None:
+    """What the changed code calls, and where that lives.
+
+    A reader looking at a review of six files has to hold the shape of the change
+    in their head before any finding means anything. This is the shape: which
+    changed file reaches which definition, and whether that definition is part of
+    the change or something it depends on.
+    """
+    edges = result.edges
+    if not edges:
+        return
+
+    by_caller: dict[str, list] = {}
+    for edge in edges:
+        by_caller.setdefault(edge.caller, []).append(edge)
+
+    console.print()
+    console.print("  [bold]What this change reaches[/bold]")
+    changed = set(by_caller)
+    shown = 0
+    for caller, calls in sorted(by_caller.items()):
+        console.print(f"    [bold]{caller}[/bold]")
+        for edge in calls[:limit]:
+            target = edge.definition
+            inside = target.path in changed
+            line = Text("      ")
+            line.append("calls ", style="dim")
+            line.append(f"{target.name}()", style="cyan")
+            line.append(" " * max(1, 22 - len(target.name)))
+            line.append(f"{target.path}:{target.start}", style="dim")
+            if target.path == caller:
+                line.append("  (same file)", style="dim")
+            elif inside:
+                # The interesting one: two files in the same change, one calling
+                # the other. A defect that spans them is invisible in either.
+                line.append("  (also changed here)", style="yellow")
+            console.print(line)
+            shown += 1
+        if len(calls) > limit:
+            console.print(f"      [dim]...and {len(calls) - limit} more[/dim]")
+    console.print(
+        f"  [dim]{shown} call(s) placed. Names defined in two places, or imported "
+        "from outside this repo, are left out rather than guessed.[/dim]"
+    )
+
+
 def _short(n: int) -> str:
     return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
 
@@ -116,6 +200,8 @@ def render(result: ReviewResult, request: ReviewRequest, console: Console | None
                 f"{result.usage.get('merged_count', 0):.0f} merged → 0 confirmed[/dim]"
             )
         render_delta(result, console)
+        render_rejected(result, console)
+        render_changes(result, console)
         render_tokens(result, console)
         render_problems(result, console)
         console.print()
@@ -178,6 +264,8 @@ def render(result: ReviewResult, request: ReviewRequest, console: Console | None
         )
         + "[/dim]"
     )
+    render_rejected(result, console)
+    render_changes(result, console)
     render_tokens(result, console)
     render_problems(result, console)
     console.print()

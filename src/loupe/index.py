@@ -77,6 +77,27 @@ class Reference:
     tokens: int
 
 
+@dataclass(frozen=True)
+class Edge:
+    """One call from a changed line to somewhere it is defined.
+
+    Recorded whether or not the definition went into a prompt: a call to a
+    function defined in another file *of the same change* is the most useful
+    thing to show a reader, and it is exactly the case the prompt leaves out
+    because the reviewer can already see it.
+    """
+
+    caller: str  # the changed file the call is written in
+    name: str
+    definition: Definition
+    shown: bool  # whether its source was put in front of the reviewers
+
+    @property
+    def crosses_out(self) -> bool:
+        """Does this reach code the change does not touch?"""
+        return not self.shown or self.definition.path != self.caller
+
+
 @dataclass
 class Stats:
     """What the expansion did, in enough detail to say so out loud."""
@@ -225,18 +246,17 @@ def on_screen(defn: Definition, visible: dict[str, set[int]]) -> bool:
     return defn.start in visible.get(defn.path, set())
 
 
-def resolve(
+def locate(
     name: str,
     imports: dict[str, tuple[str, str | None]],
     index: Index,
     own_path: str,
-    visible: dict[str, set[int]],
 ) -> Definition | None:
-    """The one definition this name means, or None.
+    """Where this name is defined in this repository, or None.
 
-    None is the common and correct answer. It means one of: imported from outside
-    this repository, several definitions share the name, or the definition is
-    already on screen somewhere in this review.
+    None is the common and correct answer: imported from outside the repository,
+    or several definitions share the name. Says nothing about whether the
+    definition is worth putting in a prompt — that is `resolve`.
     """
     if name in imports:
         module, original = imports[name]
@@ -246,16 +266,30 @@ def resolve(
         # Nothing under that module means the import leaves the repository. Falling
         # back to a same-named local function here is precisely how a reviewer ends
         # up reading the wrong `validate`.
-        if len(candidates) != 1:
-            return None
-        return None if on_screen(candidates[0], visible) else candidates[0]
+        return candidates[0] if len(candidates) == 1 else None
 
     candidates = index.by_name.get(name, [])
     # A definition in the calling file shadows one of the same name elsewhere.
     pool = [d for d in candidates if d.path == own_path] or candidates
-    if len(pool) != 1:
+    return pool[0] if len(pool) == 1 else None
+
+
+def resolve(
+    name: str,
+    imports: dict[str, tuple[str, str | None]],
+    index: Index,
+    own_path: str,
+    visible: dict[str, set[int]],
+) -> Definition | None:
+    """The definition worth sending to a reviewer, or None.
+
+    Adds one rule to `locate`: a definition already on screen is not sent twice.
+    The change map still wants that edge, which is why the two are separate.
+    """
+    found = locate(name, imports, index, own_path)
+    if found is None or on_screen(found, visible):
         return None
-    return None if on_screen(pool[0], visible) else pool[0]
+    return found
 
 
 def render(defn: Definition, repo_root: str | Path, max_lines: int) -> str | None:
@@ -289,8 +323,12 @@ def gather(
     estimate,
     visible_lines,
     on_secret: str = "redact",  # noqa: S107 — a policy name, not a credential
-) -> tuple[list[Reference], Stats]:
+) -> tuple[list[Reference], Stats, list[Edge]]:
     """Resolve what the changed Python lines call, and render what resolves.
+
+    Returns the definitions worth sending, what happened while finding them, and
+    every edge discovered — the last of which is what the change map draws, and
+    deliberately includes edges whose definition the prompt left out.
 
     `estimate` and `visible_lines` are passed in rather than imported so this stays
     a pure function of its inputs — it is the piece most likely to need testing
@@ -303,13 +341,13 @@ def gather(
         if fd.path.endswith((".py", ".pyi")) and fd.path in contexts and fd.content_after
     ]
     if not python_files:
-        return [], stats
+        return [], stats, []
 
     index = build(request.repo_root, max_files)
     stats.files_indexed = index.files
     stats.partial_index = index.partial
     if not index.files:
-        return [], stats
+        return [], stats, []
 
     # A definition called from three changed files is worth more room than one
     # called once, so count call sites across the whole change before choosing.
@@ -318,17 +356,22 @@ def gather(
     visible = {path: visible_lines(ctx) for path, ctx in contexts.items()}
 
     wanted: dict[Definition, int] = {}
+    found: list[tuple[str, str, Definition]] = []
     for fd in python_files:
         source = fd.content_after or ""
         imports = imported_names(source, fd.path)
         for name, count in called_names(source, fd.changed_lines).items():
             stats.names += 1
-            defn = resolve(name, imports, index, fd.path, visible)
+            defn = locate(name, imports, index, fd.path)
             if defn is None:
                 if len(index.by_name.get(name, [])) > 1:
                     stats.ambiguous += 1
                 else:
                     stats.unresolved += 1
+                continue
+            found.append((fd.path, name, defn))
+            if on_screen(defn, visible):
+                # Already in front of the reviewer. Still an edge worth drawing.
                 continue
             wanted[defn] = wanted.get(defn, 0) + count
 
@@ -354,7 +397,12 @@ def gather(
         stats.resolved += 1
         references.append(Reference(defn, source, callers, tokens))
 
-    return references, stats
+    sent = {r.definition for r in references}
+    edges = [
+        Edge(caller=caller, name=name, definition=defn, shown=defn in sent)
+        for caller, name, defn in sorted(found, key=lambda e: (e[0], e[1]))
+    ]
+    return references, stats, edges
 
 
 def enabled(setting: str, source: str) -> bool:
