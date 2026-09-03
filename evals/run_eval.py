@@ -101,6 +101,15 @@ def check_did_work(results: dict[str, list[Report]]) -> bool:
                     "exhausted. Re-run `review doctor` and check your limits."
                 )
                 ok = False
+            elif r.fell_back:
+                console.print(
+                    f"[red]{arm} run {i}: {r.fell_back} of {len(r.scores)} cases "
+                    "fell back to the local model mid-run.[/red] These numbers mix "
+                    "two models and measure neither. Re-run when quota resets, or "
+                    "set REVIEWER_PROVIDER=ollama to measure the local model on "
+                    "its own."
+                )
+                ok = False
             elif r.reviewed == 0:
                 console.print(
                     f"[red]{arm} run {i}: none of the {len(r.scores)} cases were "

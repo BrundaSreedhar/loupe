@@ -16,12 +16,33 @@ calls, so the daily budget is roughly **two reviews**.
 review doctor          # provider, model, key, rate limit — check before running
 ```
 
-Ollama is installed locally with `qwen2:7b`. Use a local model for anything that
-is testing the plumbing rather than the review quality. Every bug found in this
-repo so far has been structural — a bad corpus, two filters disagreeing, a broken
-guard — and a small local model would have caught all of them for free.
+Ollama is installed locally with `qwen2:7b`, and is wired in as a third provider.
+Use it for anything testing the plumbing rather than the review quality. Every bug
+found in this repo so far has been structural — a bad corpus, two filters
+disagreeing, a broken guard — and a small local model would have caught all of
+them for free and without limit.
 
-Switch providers with `REVIEWER_PROVIDER=google|anthropic`. Nothing else changes.
+```bash
+REVIEWER_PROVIDER=ollama review local HEAD~1     # run entirely on the local model
+REVIEWER_FALLBACK_MODEL=qwen2:7b                 # or use it only when quota runs out
+```
+
+`qwen2:7b` needs `method="json_schema"` for structured output; `function_calling`
+returns None and fails. All call sites already use `json_schema` — do not change
+that without testing against the local model.
+
+The fallback fires **only** on a confirmed daily exhaustion, never on a transient
+per-minute limit — swapping a frontier model for a 7B one over a seven-second
+hiccup silently downgrades the review. Any review that used it says so, at error
+severity, and the eval refuses to report numbers from a run that mixed models.
+
+**Do not read a local model's findings as a quality signal.** On a planted
+off-by-one it reported a plausible but different issue and missed the seeded bug.
+It tells you the pipeline works, not whether the reviewer is good.
+
+`REVIEWER_MODEL` applies to whichever provider is active. A Gemini model name left
+set while the provider is ollama is detected and corrected with a warning, but
+comment it out rather than relying on that.
 
 ## Commands
 

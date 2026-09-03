@@ -13,7 +13,7 @@ from collections import defaultdict
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..config import MERGE_LINE_WINDOW, merger_llm
+from ..config import MERGE_LINE_WINDOW, merger_llm, structured
 from ..prompts.merge import SYSTEM, user_prompt
 from ..quota import raise_if_terminal
 from ..schema import Finding, MergeResult, Problem
@@ -46,7 +46,7 @@ def dedupe(state: ReviewState) -> dict:
     if not findings:
         return {"merged": []}
 
-    llm = merger_llm().with_structured_output(MergeResult, method="json_schema")
+    llm = structured(merger_llm(), MergeResult, "dedupe")
     merged: list[Finding] = []
     problems: list[Problem] = []
 

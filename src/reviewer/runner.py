@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from .fallback import reset_usage, usage
 from .graph import build_graph
 from .schema import Finding, Problem, ReviewRequest, ReviewResult, Verdict
 
@@ -24,6 +25,7 @@ def run_review(
     verify: bool = True,
     run_name: str | None = None,
 ) -> ReviewResult:
+    reset_usage()
     final = _graph().invoke(
         {
             "request": request,
@@ -53,7 +55,17 @@ def run_review(
     merged: list[Finding] = final.get("merged") or []
     verdicts: list[Verdict] = final.get("verdicts") or []
     accepted: list[Finding] = final.get("accepted") or []
-    problems: list[Problem] = final.get("problems") or []
+    problems: list[Problem] = list(final.get("problems") or [])
+    fell_back = usage()
+    if fell_back:
+        problems.append(Problem(
+            stage="fallback",
+            detail=f"{len(fell_back)} stage(s) ran on the local model after the "
+                   f"daily quota ran out ({', '.join(sorted(fell_back))}). These "
+                   "findings come from a smaller model and are not comparable "
+                   "with a normal run.",
+            severity="error",
+        ))
 
     confirmed = sum(1 for v in verdicts if v.status == "CONFIRMED")
     return ReviewResult(
@@ -75,5 +87,6 @@ def run_review(
             # How many files the reviewers were actually shown. Zero means the
             # review never happened, which must not be reported as "found nothing".
             "contexts": len(final.get("contexts") or {}),
+            "fallback_stages": len(fell_back),
         },
     )

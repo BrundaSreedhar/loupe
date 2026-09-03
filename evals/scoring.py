@@ -28,6 +28,7 @@ class CaseScore:
     accepted: int
     rejection_rate: float
     contexts: int = 0
+    fallback_stages: int = 0
     mutator: str = ""
 
 
@@ -76,6 +77,12 @@ class Report:
         cautious reviewer and is in fact a broken one."""
         return sum(1 for s in self.scores if s.contexts > 0)
 
+    @property
+    def fell_back(self) -> int:
+        """Cases where some stage ran on the local fallback model. A score mixing
+        two models measures neither of them."""
+        return sum(1 for s in self.scores if s.fallback_stages)
+
     def by_mutator(self) -> dict[str, float]:
         buckets: dict[str, list[bool]] = {}
         for s in self._d():
@@ -92,6 +99,7 @@ class Report:
             "n_defect": len(self._d()),
             "n_clean": len(self._c()),
             "reviewed": self.reviewed,
+            "fell_back": self.fell_back,
             "scored": len(self.scores),
         }
 
@@ -122,6 +130,7 @@ def score_case(case: Case, result: ReviewResult) -> CaseScore:
         accepted=len(accepted),
         rejection_rate=result.usage.get("rejection_rate", 0.0),
         contexts=int(result.usage.get("contexts", 0)),
+        fallback_stages=int(result.usage.get("fallback_stages", 0)),
         mutator=case.truth.name if case.truth else "",
     )
 

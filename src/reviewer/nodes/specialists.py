@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..config import specialist_llm
+from ..config import specialist_llm, structured
 from ..prompts.specialists import SHARED_SYSTEM, context_message, role_message
 from ..schema import Finding, FindingBatch, Problem, validate_fix
 from ..state import SpecialistTask
@@ -22,7 +22,7 @@ def specialist(task: SpecialistTask) -> dict:
     if not contexts:
         return {"findings": []}
 
-    llm = specialist_llm().with_structured_output(FindingBatch, method="json_schema")
+    llm = structured(specialist_llm(), FindingBatch, f"specialist:{role}")
     batch: FindingBatch = llm.invoke(
         [
             SystemMessage(SHARED_SYSTEM),

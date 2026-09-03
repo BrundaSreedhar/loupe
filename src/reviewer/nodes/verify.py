@@ -6,7 +6,7 @@ import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..config import verifier_llm
+from ..config import structured, verifier_llm
 from ..prompts.verify import SYSTEM, user_prompt
 from ..quota import raise_if_terminal
 from ..schema import Problem, Verdict, VerdictBatch
@@ -30,7 +30,7 @@ def verify(task: VerifyTask) -> dict:
     if not findings:
         return {"verdicts": []}
 
-    llm = verifier_llm().with_structured_output(VerdictBatch, method="json_schema")
+    llm = structured(verifier_llm(), VerdictBatch, "verify")
     try:
         batch: VerdictBatch = llm.invoke(
             [SystemMessage(SYSTEM), HumanMessage(user_prompt(findings, path, task["source"]))],

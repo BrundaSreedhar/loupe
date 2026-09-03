@@ -9,9 +9,11 @@ that differently — Anthropic through `output_config.effort`, Google through
 
 from __future__ import annotations
 
+import logging
 import os
 from functools import cache
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 from langchain_core.language_models import BaseChatModel
@@ -27,15 +29,63 @@ if _own_env.is_file():
 
 PROVIDER = os.getenv("REVIEWER_PROVIDER", "google").lower()
 
-_DEFAULT_MODEL = {"google": "gemini-3.5-flash", "anthropic": "claude-opus-5"}
-_CHEAP_MODEL = {"google": "gemini-3.5-flash-lite", "anthropic": "claude-opus-5"}
-_KEY_ENV = {"google": "GOOGLE_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+_DEFAULT_MODEL = {
+    "google": "gemini-3.5-flash",
+    "anthropic": "claude-opus-5",
+    "ollama": "qwen2:7b",
+}
+_CHEAP_MODEL = {
+    "google": "gemini-3.5-flash-lite",
+    "anthropic": "claude-opus-5",
+    "ollama": "qwen2:7b",
+}
+_KEY_ENV = {
+    "google": "GOOGLE_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "ollama": "(none — runs locally)",
+}
+
+# A local model to fall back to when the day's quota is exhausted. Empty disables
+# it, and the review fails instead — which is the right default for anything whose
+# output you intend to trust or measure.
+FALLBACK_MODEL = os.getenv("REVIEWER_FALLBACK_MODEL", "")
+OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+# Local models are slower per call but have no per-minute cap.
+OLLAMA_NUM_CTX = int(os.getenv("REVIEWER_OLLAMA_NUM_CTX", "16384"))
 
 if PROVIDER not in _DEFAULT_MODEL:
     raise ValueError(f"REVIEWER_PROVIDER must be one of {sorted(_DEFAULT_MODEL)}, got {PROVIDER!r}")
 
-MODEL = os.getenv("REVIEWER_MODEL") or _DEFAULT_MODEL[PROVIDER]
-CHEAP_MODEL = os.getenv("REVIEWER_CHEAP_MODEL") or _CHEAP_MODEL[PROVIDER]
+# Model names are recognisable by prefix, which is enough to catch the common
+# misconfiguration: REVIEWER_MODEL left set to one provider's model while
+# REVIEWER_PROVIDER points at another. Without this, switching to a local model
+# silently asks Ollama for "gemini-3.5-flash" and fails somewhere much later.
+_MODEL_PREFIX = {"google": ("gemini",), "anthropic": ("claude",)}
+
+
+def _belongs_to_another_provider(name: str) -> str | None:
+    for provider, prefixes in _MODEL_PREFIX.items():
+        if provider != PROVIDER and name.lower().startswith(prefixes):
+            return provider
+    return None
+
+
+def _resolve_model(env_var: str, defaults: dict[str, str]) -> str:
+    configured = os.getenv(env_var)
+    if not configured:
+        return defaults[PROVIDER]
+    if (other := _belongs_to_another_provider(configured)) is not None:
+        logging.getLogger(__name__).warning(
+            "%s=%r looks like a %s model but REVIEWER_PROVIDER=%s; using %r instead. "
+            "Set %s explicitly if that was deliberate.",
+            env_var, configured, other, PROVIDER, defaults[PROVIDER], env_var,
+        )
+        return defaults[PROVIDER]
+    return configured
+
+
+MODEL = _resolve_model("REVIEWER_MODEL", _DEFAULT_MODEL)
+CHEAP_MODEL = _resolve_model("REVIEWER_CHEAP_MODEL", _CHEAP_MODEL)
 
 # Requests per minute, client-side. Google's free tier is measured in tens of RPM,
 # and one multi-agent review is ~8-12 calls, so without this an eval run trips the
@@ -73,6 +123,8 @@ ON_SECRET = os.getenv("REVIEWER_ON_SECRET", "redact").lower()
 def credentials_present() -> bool:
     if PROVIDER == "anthropic":
         return bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"))
+    if PROVIDER == "ollama":
+        return True  # nothing to authenticate against
     return bool(os.getenv("GOOGLE_API_KEY"))
 
 
@@ -96,15 +148,37 @@ VERIFY_MODE = os.getenv("REVIEWER_VERIFY_MODE", "per_file")
 
 @cache
 def _rate_limiter() -> InMemoryRateLimiter | None:
-    if RPM <= 0:
-        return None
+    if RPM <= 0 or PROVIDER == "ollama":
+        return None  # a local model has no quota to protect
     return InMemoryRateLimiter(
         requests_per_second=RPM / 60, max_bucket_size=max(BURST, 1)
     )
 
 
+def _ollama(model: str, max_tokens: int) -> BaseChatModel:
+    from langchain_ollama import ChatOllama
+
+    return ChatOllama(
+        model=model,
+        base_url=OLLAMA_URL,
+        num_ctx=OLLAMA_NUM_CTX,
+        num_predict=max_tokens,
+        temperature=0,
+    )
+
+
+def local_llm(max_tokens: int = 8000) -> BaseChatModel | None:
+    """The fallback model, or None when no fallback is configured."""
+    if not FALLBACK_MODEL:
+        return None
+    return _ollama(FALLBACK_MODEL, max_tokens)
+
+
 def _llm(effort: str, max_tokens: int = 16000, cheap: bool = False) -> BaseChatModel:
     model = CHEAP_MODEL if cheap else MODEL
+
+    if PROVIDER == "ollama":
+        return _ollama(model, max_tokens)
 
     if PROVIDER == "anthropic":
         from langchain_anthropic import ChatAnthropic
@@ -144,3 +218,19 @@ def verifier_llm() -> BaseChatModel:
 def merger_llm() -> BaseChatModel:
     """Mechanical: decide whether two findings describe the same defect."""
     return _llm("low", max_tokens=4000, cheap=True)
+
+
+def structured(llm: Any, schema: Any, label: str) -> Any:
+    """Bind a schema, and wrap in a local fallback when one is configured.
+
+    Applied after `with_structured_output` rather than before, because the
+    fallback has to produce the same shape as the primary — a fallback that
+    returns free text where the caller expects a parsed object is not a fallback.
+    """
+    primary = llm.with_structured_output(schema, method="json_schema")
+    local = local_llm()
+    if local is None or PROVIDER == "ollama":
+        return primary
+    from .fallback import LocalFallback
+
+    return LocalFallback(primary, local.with_structured_output(schema, method="json_schema"), label)
