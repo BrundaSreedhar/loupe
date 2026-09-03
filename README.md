@@ -55,7 +55,7 @@ loupe local HEAD~1
                                              (dry run unless --post)
 ```
 
-`loupe graph` prints the compiled version, which is the authoritative one.
+`loupe pipeline` prints the compiled version, which is the authoritative one.
 
 Three ordering decisions carry weight:
 

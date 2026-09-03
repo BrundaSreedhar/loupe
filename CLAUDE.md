@@ -64,7 +64,7 @@ loupe local HEAD~1                  # review a local diff
 loupe local --mode single           # one reviewer instead of four (1 call)
 loupe local --no-verify             # skip the checking pass
 loupe pr owner/repo 123             # dry run; --post writes to GitHub
-loupe graph                         # print the compiled graph
+loupe pipeline                         # print the compiled graph
 loupe local HEAD~1 -v               # show what each stage did
 loupe local HEAD~1 -vv              # add debug;  -vvv adds HTTP traffic
 python -m evals.run_eval main --source ~/repo --n-defect 6 --n-clean 6

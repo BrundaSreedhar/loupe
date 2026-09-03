@@ -183,8 +183,13 @@ def doctor() -> None:
 
 
 @app.command()
-def graph() -> None:
-    """Print the compiled graph as mermaid."""
+def pipeline() -> None:
+    """Print loupe's own review pipeline as mermaid.
+
+    Named `pipeline`, not `graph`: a code reviewer that indexes the repository it
+    is reviewing will want `graph` to mean that repository's call graph, and
+    having one name mean both is how people run the wrong command.
+    """
     from .graph import build_graph
 
     print(build_graph().get_graph().draw_mermaid())
