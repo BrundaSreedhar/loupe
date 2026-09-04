@@ -104,6 +104,32 @@ and a replacement patch where the reviewer could write one exactly — which bec
 a one-click suggestion on a pull request. Docs, lockfiles, generated and vendored
 files are skipped, and the run says what it skipped.
 
+## Watching it work
+
+A review is six to twelve model calls over a couple of minutes. While it runs,
+every piece of work in flight gets its own spinner — four reviewers at once, then
+one per file being verified — and each stage prints what it did as it finishes:
+
+```
+  · nothing that looks like a credential, nothing addressed to the reviewer
+  · windowed 3 files — src/loupe/index.py, src/loupe/emit.py and 1 more
+  · followed 9 calls out of the diff into 4 files; 5 definitions go in the prompt
+  · ruff went first: 2 issues the panel is told to skip
+  · security reviewer says nothing
+  · correctness reviewer says 2 findings
+  · 3 filed, 2 left after merging the duplicates
+  · src/loupe/index.py: 1 stood up, 1 rejected
+```
+
+The spinners disappear when they finish; those lines stay. Animation is off when
+the output is not a terminal, where the stage lines are printed on their own —
+a redirected log full of spinner frames is worse than no spinner.
+
+Findings the gate rejected are printed too, with the reasoning that rejected
+them. "1 merged → 0 confirmed" used to be a dead end while the explanation sat
+unread in the result, and a rejection is either the gate doing its job or the
+gate being wrong — you cannot tell which without reading it.
+
 ## Beyond the diff
 
 Two things stop a reviewer from having to guess.

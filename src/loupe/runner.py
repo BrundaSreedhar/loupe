@@ -7,6 +7,7 @@ from typing import Literal
 
 from .fallback import reset_usage, usage
 from .graph import build_graph
+from .progress import callbacks as progress_callbacks
 from .progress import reporter
 from .quota import raise_if_terminal
 from .schema import Finding, Problem, ReviewRequest, ReviewResult, TokenUsage, Verdict
@@ -37,8 +38,11 @@ def run_review(
     # branch by LangGraph, where a context variable's propagation is not something
     # to rely on across a thread pool.
     meter = Meter()
+    # A spinner still turning over a traceback is its own bug, so the watcher is
+    # closed whatever happens — including on the quota abort below.
+    watcher = reporter(progress)
     try:
-        final = _invoke(request, mode, verify, run_name, remember, lint, meter, progress)
+        final = _invoke(request, mode, verify, run_name, remember, lint, meter, watcher)
     except Exception as exc:  # noqa: BLE001 — re-raised immediately; this only
         # decides which exception the caller sees.
         # A daily cap has to arrive as DailyQuotaExhausted whichever node hit it.
@@ -48,10 +52,13 @@ def run_review(
         # and ground through the rest of the corpus failing identically.
         raise_if_terminal(exc)
         raise
+    finally:
+        if watcher is not None:
+            watcher.close()
     return _assemble(request, mode, verify, final, collect(meter))
 
 
-def _invoke(request, mode, verify, run_name, remember, lint, meter, progress=None):
+def _invoke(request, mode, verify, run_name, remember, lint, meter, watcher=None):
     return _graph().invoke(
         {
             "request": request,
@@ -81,7 +88,7 @@ def _invoke(request, mode, verify, run_name, remember, lint, meter, progress=Non
             "recursion_limit": 100,
             # Every model call in the run reports its usage here, retries and
             # fallbacks included.
-            "callbacks": [meter, *reporter(progress)],
+            "callbacks": [meter, *progress_callbacks(watcher)],
         },
     )
 

@@ -85,7 +85,7 @@ def test_a_review_carries_what_it_cost(monkeypatch):
     import loupe.runner as runner
     from loupe.schema import ReviewRequest
 
-    def fake_invoke(request, mode, verify, run_name, remember, lint, meter, progress=None):
+    def fake_invoke(request, mode, verify, run_name, remember, lint, meter, watcher=None):
         meter.on_llm_end(reply("some-model", 4000, 500, cache_read=3000))
         return {"findings": [], "merged": [], "accepted": [], "verdicts": []}
 

@@ -158,6 +158,13 @@ cannot check, which is right for a bad response and wrong for a quota failure â€
 that produces a clean-looking review that never happened. Call `raise_if_terminal`
 first.
 
+**The progress display has two halves and they are not interchangeable.**
+Spinners say what is running now and are transient; the printed lines say what
+each stage did and stay. When stdout is not a terminal there is no spinner, so
+the start text is printed instead â€” otherwise a piped log loses which reviewer
+opened what. `Reporter.close()` runs in a `finally`: a spinner still turning over
+a traceback is its own bug.
+
 **A file path is diff content, in the terminal too.** Paths are
 attacker-controlled on a pull request, and the report and the progress lines are
 printed with Rich markup on. An unmatched `[/bold]` in a filename raises

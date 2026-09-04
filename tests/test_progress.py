@@ -100,11 +100,17 @@ def test_the_linter_pre_pass_names_its_tool():
     assert "1 issue" in text
 
 
-def test_a_quiet_stage_says_nothing():
-    """Not every stage has news. A line per node regardless would bury the ones
-    that matter."""
-    assert run("lint", {}, {"lint_issues": []}) == ""
-    assert run("expand", {}, {"edges": [], "references": []}) == ""
+def test_a_stage_with_no_news_announces_itself_but_claims_nothing():
+    """Every stage says it is running — that is the point of the spinner, and in
+    a pipe the same text is printed instead. What a stage must not do is invent a
+    result: a linter that found nothing reports nothing."""
+    text = run("lint", {}, {"lint_issues": []})
+    assert "linters" in text
+    assert "issue" not in text
+
+    text = run("expand", {}, {"edges": [], "references": []})
+    assert "following what the change calls" in text
+    assert "definition" not in text
 
 
 def test_the_last_line_says_whether_anything_survived():
@@ -115,5 +121,8 @@ def test_the_last_line_says_whether_anything_survived():
 def test_nobody_watching_means_no_callbacks():
     """The eval harness runs this graph thousands of times and wants none of it,
     and `--output json` would be corrupted by narration on stdout."""
-    assert reporter(None) == []
-    assert len(reporter(Console())) == 1
+    from loupe.progress import callbacks
+
+    assert reporter(None) is None
+    assert callbacks(None) == []
+    assert len(callbacks(reporter(Console()))) == 1
