@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import ast
 import logging
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,6 +50,10 @@ class Definition:
     start: int
     end: int
     module: str  # dotted, as an import would name it
+    # The first sentence of its docstring, or "". Not for the model — for the
+    # person reading a review of a codebase they have never seen, who needs to
+    # know what `gather()` is before any finding about it means anything.
+    doc: str = ""
 
     @property
     def label(self) -> str:
@@ -59,6 +64,8 @@ class Definition:
 class Index:
     by_name: dict[str, list[Definition]] = field(default_factory=dict)
     by_module: dict[str, list[Definition]] = field(default_factory=dict)
+    # path -> the first sentence of the file's module docstring.
+    summaries: dict[str, str] = field(default_factory=dict)
     files: int = 0
     partial: bool = False  # hit the file cap; some of the repo is not in here
 
@@ -109,6 +116,43 @@ class Stats:
     unresolved: int = 0  # not defined in this repository (a library, a builtin)
     over_budget: int = 0
     secrets: int = 0  # definitions carrying something that looked like a credential
+    changed: int = 0  # definitions this change edited
+
+
+@dataclass
+class Expansion:
+    """Everything one pass of the index produced.
+
+    A tuple was fine at three; the fourth is the point at which the caller starts
+    unpacking positionally and getting it wrong.
+    """
+
+    references: list[Reference]
+    stats: Stats
+    edges: list[Edge]
+    # path -> one line on what that file is for, for every file in `edges`.
+    summaries: dict[str, str] = field(default_factory=dict)
+    # The definitions this change edited. Not derived from the repository index —
+    # only from the changed files' own trees — so it survives an index that found
+    # nothing, and it is what the reverse lookups are keyed by.
+    changed: list[Definition] = field(default_factory=list)
+
+
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s")
+
+
+def summarise(doc: str | None, limit: int = 160) -> str:
+    """The first sentence of a docstring, on one line.
+
+    These files open with a paragraph explaining what they are for, which is
+    exactly what someone new to the codebase needs and exactly what a diff does
+    not give them. One sentence is the part that fits in a box.
+    """
+    if not doc:
+        return ""
+    first = _SENTENCE_END.split(doc.strip(), 1)[0]
+    text = " ".join(first.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 def module_of(rel_path: str) -> str:
@@ -130,6 +174,7 @@ def _definitions_in(tree: ast.Module, rel_path: str) -> Iterable[Definition]:
             start=node.lineno,
             end=getattr(node, "end_lineno", node.lineno) or node.lineno,
             module=module,
+            doc=summarise(ast.get_docstring(node)),
         )
 
     for node in tree.body:
@@ -171,6 +216,7 @@ def build(repo_root: str | Path, max_files: int) -> Index:
             # Not a failure of the review.
             continue
         index.files += 1
+        index.summaries[rel] = summarise(ast.get_docstring(tree))
         for defn in _definitions_in(tree, rel):
             index.add(defn)
 
@@ -214,6 +260,73 @@ def called_names(source: str, lines: set[int], tree: ast.Module | None = None) -
             continue
         counts[name] = counts.get(name, 0) + 1
     return counts
+
+
+def _definition_spans(
+    node: ast.AST, rel_path: str, module: str, in_class: bool = False
+) -> Iterable[tuple[int, int, Definition]]:
+    """Every def/class in the tree as (span_start, span_end, Definition).
+
+    `span_start` reaches back over the decorators, which `Definition.start` does
+    not: a change to `@app.route(...)` is a change to the function under it, but
+    `start` has to keep pointing at the `def` line because `render` slices source
+    from it. Recursion carries `in_class` so a function in a class body is a
+    method however many `if` blocks sit between them.
+    """
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            is_class = isinstance(child, ast.ClassDef)
+            kind = "class" if is_class else ("method" if in_class else "function")
+            end = getattr(child, "end_lineno", child.lineno) or child.lineno
+            yield (
+                min([child.lineno, *(d.lineno for d in child.decorator_list)]),
+                end,
+                Definition(
+                    name=child.name,
+                    kind=kind,
+                    path=rel_path,
+                    start=child.lineno,
+                    end=end,
+                    module=module,
+                    doc=summarise(ast.get_docstring(child)),
+                ),
+            )
+            yield from _definition_spans(child, rel_path, module, in_class=is_class)
+        else:
+            yield from _definition_spans(child, rel_path, module, in_class=in_class)
+
+
+def changed_definitions(
+    source: str, lines: set[int], rel_path: str, tree: ast.Module | None = None
+) -> list[Definition]:
+    """The definitions this change edited — innermost first, in file order.
+
+    A diff is a set of line numbers, which is the wrong unit for almost every
+    question worth asking about a change. "Which functions did this touch" is the
+    unit that a caller lookup, a test lookup and a history lookup all key on, and
+    it is also what lets a windowed file show whole functions instead of fragments.
+
+    Innermost wins: a change inside a nested helper is a change to the helper, not
+    to the class three levels out. A line that sits in no definition at all — an
+    import, a module-level constant — contributes nothing rather than the file,
+    because "the whole module changed" is not a useful answer to any of them.
+    """
+    tree = tree if tree is not None else parse(source)
+    if tree is None or not lines:
+        return []
+
+    spans = list(_definition_spans(tree, rel_path, module_of(rel_path)))
+    if not spans:
+        return []
+
+    found: dict[Definition, None] = {}
+    for line in sorted(lines):
+        enclosing = [s for s in spans if s[0] <= line <= s[1]]
+        if enclosing:
+            # Latest start = deepest nesting, since a child always starts after
+            # the parent it is written inside.
+            found[max(enclosing, key=lambda s: s[0])[2]] = None
+    return sorted(found, key=lambda d: (d.start, d.name))
 
 
 def imported_names(
@@ -335,7 +448,7 @@ def gather(
     estimate,
     visible_lines,
     on_secret: str = "redact",  # noqa: S107 — a policy name, not a credential
-) -> tuple[list[Reference], Stats, list[Edge]]:
+) -> Expansion:
     """Resolve what the changed Python lines call, and render what resolves.
 
     Returns the definitions worth sending, what happened while finding them, and
@@ -353,13 +466,27 @@ def gather(
         if fd.path.endswith((".py", ".pyi")) and fd.path in contexts and fd.content_after
     ]
     if not python_files:
-        return [], stats, []
+        return Expansion([], stats, [])
+
+    # Computed before the repository index, and returned even when that index
+    # comes back empty: this depends only on the changed files themselves.
+    changed: list[Definition] = []
+    trees: dict[str, ast.Module] = {}
+    for fd in python_files:
+        tree = parse(fd.content_after or "")
+        if tree is None:
+            continue
+        trees[fd.path] = tree
+        changed.extend(
+            changed_definitions(fd.content_after or "", fd.changed_lines, fd.path, tree)
+        )
+    stats.changed = len(changed)
 
     index = build(request.repo_root, max_files)
     stats.files_indexed = index.files
     stats.partial_index = index.partial
     if not index.files:
-        return [], stats, []
+        return Expansion([], stats, [], changed=changed)
 
     # A definition called from three changed files is worth more room than one
     # called once, so count call sites across the whole change before choosing.
@@ -369,11 +496,13 @@ def gather(
 
     wanted: dict[Definition, int] = {}
     found: list[tuple[str, str, Definition]] = []
+    changed_summaries: dict[str, str] = {}
     for fd in python_files:
         source = fd.content_after or ""
-        tree = parse(source)
+        tree = trees.get(fd.path)
         if tree is None:
             continue
+        changed_summaries[fd.path] = summarise(ast.get_docstring(tree))
         imports = imported_names(source, fd.path, tree)
         for name, count in called_names(source, fd.changed_lines, tree).items():
             stats.names += 1
@@ -422,7 +551,14 @@ def gather(
         )
         for caller, name, defn in sorted(found, key=lambda e: (e[0], e[1]))
     ]
-    return references, stats, edges
+    # Callers first so a changed file describes itself as it is now, then the
+    # rest of the repository as it stands on disk.
+    summaries = {
+        path: index.summaries.get(path, "")
+        for path in {e.definition.path for e in edges}
+    }
+    summaries.update(changed_summaries)
+    return Expansion(references, stats, edges, summaries, changed)
 
 
 def enabled(setting: str, source: str) -> bool:

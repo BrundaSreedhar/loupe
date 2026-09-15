@@ -88,10 +88,35 @@ def test_the_change_map_shows_what_each_changed_file_calls():
     )
     text = out(render_changes, result)
 
-    assert "What this change reaches" in text
+    assert "How this change fits together" in text
     assert "app/handlers.py" in text
     assert "validate()" in text
     assert "app/validators.py:12" in text
+
+
+def test_each_box_says_what_that_file_is_for():
+    """The whole point for a reader who has never opened the repository: a diff
+    lists edits to files they cannot name the purpose of."""
+    result = ReviewResult(
+        request_ref="HEAD", mode="multi", verified=True,
+        edges=[_edge("app/handlers.py", "validate", "app/validators.py")],
+        summaries={
+            "app/handlers.py": "Turns a request into a charge.",
+            "app/validators.py": "Rejects payloads that cannot be charged.",
+        },
+    )
+    text = out(render_changes, result)
+
+    assert "Turns a request into a charge." in text
+    assert "Rejects payloads that cannot be charged." in text
+
+
+def test_a_file_with_no_docstring_says_so_rather_than_looking_described():
+    result = ReviewResult(
+        request_ref="HEAD", mode="multi", verified=True,
+        edges=[_edge("app/handlers.py", "validate", "app/validators.py")],
+    )
+    assert "no description in this file" in out(render_changes, result)
 
 
 def test_a_call_into_another_changed_file_is_called_out():
@@ -107,7 +132,7 @@ def test_a_call_into_another_changed_file_is_called_out():
     text = out(render_changes, result)
 
     # app/money.py is both a caller and a callee, so it is part of the change.
-    assert "also changed here" in text
+    assert "also changed" in text
 
 
 def test_no_resolved_calls_draws_no_map():
@@ -168,3 +193,137 @@ def test_a_path_carrying_terminal_markup_is_shown_not_obeyed():
 
     assert "[link=" in text, "the markup was interpreted instead of printed"
     assert "[/bold]" in text
+
+
+def test_json_output_is_parseable_json(monkeypatch):
+    """`--output json` had never worked: both call sites picked a renderer with a
+    ternary and then called whichever they got using the other one's signature,
+    so every json run died on arity. Nothing exercised the flag."""
+    import json
+
+    from typer.testing import CliRunner
+
+    import loupe.cli as cli
+    from loupe.adapters import local_git
+    from loupe.schema import FileDiff, Hunk
+
+    request = ReviewRequest(
+        source="local", ref="HEAD", repo_root=".",
+        files=[FileDiff(path="app/handlers.py", change_type="modified",
+                        content_after="x = 1\n",
+                        hunks=[Hunk(old_start=1, old_lines=1, new_start=1,
+                                    new_lines=1, content="")])],
+    )
+    f = finding()
+    result = ReviewResult(request_ref="HEAD", mode="multi", verified=True,
+                          raw=[f], merged=[f], accepted=[f])
+
+    monkeypatch.setattr(cli, "credentials_present", lambda: True)
+    monkeypatch.setattr(local_git, "load", lambda **kw: request)
+    monkeypatch.setattr(cli, "run_review", lambda *a, **kw: result)
+
+    outcome = CliRunner().invoke(cli.app, ["local", "--output", "json"])
+
+    assert outcome.exit_code == 0, outcome.output
+    payload = json.loads(outcome.stdout)
+    assert payload["accepted"][0]["file"] == "app/handlers.py"
+
+
+def test_json_output_carries_no_narration(monkeypatch):
+    """Anything the progress display writes to stdout would make the document
+    unparseable, which is why the reporter is switched off for json."""
+    import json
+
+    from typer.testing import CliRunner
+
+    import loupe.cli as cli
+    from loupe.adapters import local_git
+    from loupe.schema import FileDiff, Hunk
+
+    request = ReviewRequest(
+        source="local", ref="HEAD", repo_root=".",
+        files=[FileDiff(path="a.py", change_type="modified", content_after="x = 1\n",
+                        hunks=[Hunk(old_start=1, old_lines=1, new_start=1,
+                                    new_lines=1, content="")])],
+    )
+    seen = {}
+
+    def capture(*args, **kwargs):
+        seen["progress"] = kwargs.get("progress")
+        return ReviewResult(request_ref="HEAD", mode="multi", verified=True)
+
+    monkeypatch.setattr(cli, "credentials_present", lambda: True)
+    monkeypatch.setattr(local_git, "load", lambda **kw: request)
+    monkeypatch.setattr(cli, "run_review", capture)
+
+    outcome = CliRunner().invoke(cli.app, ["local", "--output", "json"])
+
+    assert seen["progress"] is None, "narration would corrupt the json document"
+    json.loads(outcome.stdout)
+
+
+def test_json_says_the_same_things_the_terminal_says():
+    """The two views disagreed: the terminal joined each rejected finding to the
+    reasoning that killed it, and json left `merged` and `verdicts` side by side
+    for the reader to join again — differently, if they were not careful."""
+    import io
+    import json as jsonlib
+
+    from loupe.emit import render_json
+
+    console = Console(file=io.StringIO(), width=200, no_color=True)
+    render_json(rejected_result(), None, console)
+    payload = jsonlib.loads(console.file.getvalue())
+
+    assert len(payload["rejected"]) == 1
+    assert payload["rejected"][0]["file"] == "app/handlers.py"
+    assert "non-numeric id reaching to_cents" in payload["rejected"][0]["reasoning"]
+    assert payload["accepted"] == []
+
+
+def test_json_labels_the_edges_the_terminal_draws():
+    """The map shows cross-file calls and marks the ones between files this change
+    touches. A machine could not reproduce either without redoing the derivation."""
+    import io
+    import json as jsonlib
+
+    from loupe.emit import render_json
+
+    result = ReviewResult(
+        request_ref="HEAD", mode="multi", verified=True,
+        edges=[
+            _edge("app/emit.py", "render_delta", "app/emit.py"),
+            _edge("app/handlers.py", "to_cents", "app/money.py"),
+            _edge("app/money.py", "round_half_up", "app/rounding.py"),
+        ],
+    )
+    console = Console(file=io.StringIO(), width=200, no_color=True)
+    render_json(result, None, console)
+    edges = {e["calls"]: e for e in jsonlib.loads(console.file.getvalue())["edges"]}
+
+    assert edges["render_delta"]["cross_file"] is False
+    assert edges["to_cents"]["cross_file"] is True
+    assert edges["to_cents"]["in_change"] is True       # money.py is also changed
+    assert edges["round_half_up"]["in_change"] is False  # rounding.py is not
+
+
+def test_json_lists_what_was_reviewed_and_what_was_skipped():
+    import io
+    import json as jsonlib
+
+    from loupe.emit import render_json
+    from loupe.schema import FileDiff
+
+    request = ReviewRequest(
+        source="local", ref="HEAD",
+        files=[
+            FileDiff(path="app/a.py", change_type="modified", content_after="x = 1\n"),
+            FileDiff(path="README.md", change_type="modified", content_after="hi\n"),
+        ],
+    )
+    console = Console(file=io.StringIO(), width=200, no_color=True)
+    render_json(ReviewResult(request_ref="HEAD", mode="multi", verified=True), request, console)
+    files = jsonlib.loads(console.file.getvalue())["files"]
+
+    assert files["reviewed"] == ["app/a.py"]
+    assert files["skipped"] == ["README.md"]

@@ -194,7 +194,7 @@ def _request(root: Path, path: str, source: str) -> ReviewRequest:
     )
 
 
-def _gather(request, contexts, **kwargs):
+def _unpack(request, contexts, **kwargs):
     defaults = {
         "max_files": 100,
         "max_lines": 40,
@@ -202,7 +202,8 @@ def _gather(request, contexts, **kwargs):
         "estimate": estimate,
         "visible_lines": valid_lines,
     }
-    return gather(request, contexts, **{**defaults, **kwargs})
+    found = gather(request, contexts, **{**defaults, **kwargs})
+    return found.references, found.stats, found.edges
 
 
 def test_a_called_definition_reaches_the_reviewer(tmp_path):
@@ -210,7 +211,7 @@ def test_a_called_definition_reaches_the_reviewer(tmp_path):
     request = _request(tmp_path, "app/handlers.py", HANDLERS)
     contexts, _ = build_contexts(request)
 
-    references, stats, _edges = _gather(request, contexts)
+    references, stats, _edges = _unpack(request, contexts)
 
     assert [r.definition.path for r in references] == ["app/validators.py"]
     assert "id is required" in references[0].source
@@ -224,7 +225,7 @@ def test_an_unresolvable_call_is_counted_not_guessed(tmp_path):
     request = _request(tmp_path, "app/handlers.py", source)
     contexts, _ = build_contexts(request)
 
-    references, stats, _edges = _gather(request, contexts)
+    references, stats, _edges = _unpack(request, contexts)
 
     assert references == []
     assert stats.unresolved >= 1
@@ -242,7 +243,7 @@ def test_a_credential_in_an_unchanged_file_is_redacted_before_sending(tmp_path):
     request = _request(tmp_path, "app/handlers.py", HANDLERS)
     contexts, _ = build_contexts(request)
 
-    references, stats, _edges = _gather(request, contexts)
+    references, stats, _edges = _unpack(request, contexts)
 
     assert stats.secrets == 1
     assert "AKIAIOSFODNN7EXAMPLE" not in references[0].source
@@ -257,7 +258,7 @@ def test_blocking_on_secrets_leaves_the_definition_out_entirely(tmp_path):
     request = _request(tmp_path, "app/handlers.py", HANDLERS)
     contexts, _ = build_contexts(request)
 
-    references, stats, _edges = _gather(request, contexts, on_secret="block")  # noqa: S106
+    references, stats, _edges = _unpack(request, contexts, on_secret="block")  # noqa: S106
 
     assert references == []
     assert stats.secrets == 1
@@ -268,7 +269,7 @@ def test_definitions_over_the_budget_are_reported_not_dropped_silently(tmp_path)
     request = _request(tmp_path, "app/handlers.py", HANDLERS)
     contexts, _ = build_contexts(request)
 
-    references, stats, _edges = _gather(request, contexts, token_budget=1)
+    references, stats, _edges = _unpack(request, contexts, token_budget=1)
 
     assert references == []
     assert stats.over_budget == 1
@@ -280,7 +281,7 @@ def test_a_language_without_a_parser_here_gets_no_expansion(tmp_path):
     request = _request(tmp_path, "app/handlers.ts", "export const handle = (p) => validate(p);\n")
     contexts, _ = build_contexts(request)
 
-    references, stats, _edges = _gather(request, contexts)
+    references, stats, _edges = _unpack(request, contexts)
 
     assert references == []
     assert stats.files_indexed == 0, "indexed a repository for a change it cannot parse"
@@ -311,7 +312,7 @@ def test_a_definition_the_reviewer_can_already_see_counts_as_shown(tmp_path):
     )
     contexts, _ = build_contexts(request)
 
-    references, _stats, edges = _gather(request, contexts)
+    references, _stats, edges = _unpack(request, contexts)
 
     edge = next(e for e in edges if e.name == "validate")
     assert edge.definition.path == "app/validators.py"
@@ -342,3 +343,76 @@ def test_a_file_is_parsed_once_not_once_per_question(monkeypatch):
     index_mod.called_names(source, {5}, tree)
 
     assert len(calls) == 1
+
+
+# ─── what a change edited ───────────────────────────────────────────────────
+
+CHANGED_SRC = '''import os
+
+LIMIT = 10
+
+
+class Store:
+    """Holds things."""
+
+    def save(self, item):
+        def _normalise(value):
+            return value.strip()
+
+        return _normalise(item)
+
+    @property
+    def size(self):
+        return 0
+
+
+def free(x):
+    return x + 1
+'''
+
+
+def _names(lines: set[int]) -> list[tuple[str, str]]:
+    from loupe.index import changed_definitions
+
+    return [(d.kind, d.name) for d in changed_definitions(CHANGED_SRC, lines, "pkg/store.py")]
+
+
+def test_a_change_inside_a_method_names_the_method():
+    assert _names({13}) == [("method", "save")]
+
+
+def test_a_change_inside_a_nested_function_names_the_inner_one():
+    """Innermost wins. Reporting `Store` for a one-line change in a helper is the
+    same as reporting the file."""
+    assert _names({11}) == [("function", "_normalise")]
+
+
+def test_a_module_level_change_names_nothing():
+    """An import or a constant belongs to no definition. "The whole module" is not
+    a useful answer to "what does this change touch"."""
+    assert _names({1}) == []
+    assert _names({3}) == []
+
+
+def test_a_changed_decorator_belongs_to_what_it_decorates():
+    """`@property` is line 15 and `def size` is line 16. Editing the decorator is
+    editing the method, but Definition.start still has to point at the def line so
+    `render` slices the right source."""
+    from loupe.index import changed_definitions
+
+    found = changed_definitions(CHANGED_SRC, {15}, "pkg/store.py")
+    assert [(d.kind, d.name) for d in found] == [("method", "size")]
+    assert found[0].start == 16
+
+
+def test_definitions_come_back_in_file_order_without_duplicates():
+    # 13 and 12 are both inside `save`; 11 is inside the helper; 21 is in `free`.
+    found = _names({13, 11, 21, 12})
+    assert found == [("method", "save"), ("function", "_normalise"), ("function", "free")]
+
+
+def test_a_file_that_will_not_parse_yields_nothing():
+    """Same rule as the rest of this module: nothing rather than a guess."""
+    from loupe.index import changed_definitions
+
+    assert changed_definitions("def broken(:\n", {1}, "a.py") == []

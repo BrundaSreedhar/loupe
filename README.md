@@ -121,9 +121,52 @@ one per file being verified — and each stage prints what it did as it finishes
   · src/loupe/index.py: 1 stood up, 1 rejected
 ```
 
-The spinners disappear when they finish; those lines stay. Animation is off when
-the output is not a terminal, where the stage lines are printed on their own —
-a redirected log full of spinner frames is worse than no spinner.
+Each stage gets its own spinner — a shark swimming through the secret scan, a
+moon while the shared prefix warms, four coloured dots for four reviewers, one
+per role — so the shape of the animation tells you what is running before you
+have read the words. They disappear as they finish; the lines stay.
+
+Animation is off when the output is not a terminal, where the stage lines are
+printed on their own — a redirected log full of spinner frames is worse than no
+spinner.
+
+At the end, a diagram of the change — written for whoever has to read the review
+without knowing the codebase:
+
+```
+  How this change fits together
+
+  ╭─ src/loupe/runner.py ──────────────────────────────────────╮
+  │ Single entry point for running a review.                   │
+  ╰──────────────────────────────────────────── changed here ──╯
+     ├──▶ reporter()  src/loupe/progress.py:318  ← also changed
+     ├──▶ Meter()  src/loupe/tokens.py:28
+            Token counts plus a call count, which the base handler does not keep.
+     └──▶ raise_if_terminal()  src/loupe/quota.py:91
+
+  …and what it leans on, unchanged:
+
+      ╭─ src/loupe/tokens.py ──────────────────────────────────╮
+      │ What a review cost, in tokens.                         │
+      │                                                        │
+      │ what this change uses from it:                         │
+      │   Meter()  Token counts plus a call count…             │
+      │   collect()  Fold what the handler saw into one record.│
+      ╰────────────────────────────────────────────────────────╯
+```
+
+Every box says what that file is for, taken from the first sentence of its own
+module docstring, and every arrow says what is called and where it lives. A diff
+is a list of edits to files a newcomer cannot name the purpose of; this is the
+part that makes the findings mean something.
+
+Calls between two files the change touches are marked, because that is where a
+defect hides — invisible in either file alone.
+
+`--output json` says the same things: the same rejections with their reasoning,
+the same edges labelled `cross_file` and `in_change`, and the files reviewed and
+skipped. Nothing human-readable goes to stdout in that mode, so the document is
+always parseable.
 
 Findings the gate rejected are printed too, with the reasoning that rejected
 them. "1 merged → 0 confirmed" used to be a dead end while the explanation sat

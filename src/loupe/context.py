@@ -14,6 +14,7 @@ assembled context so the number reported to the user is not a guess.
 from __future__ import annotations
 
 from .config import FILE_TOKEN_BUDGET, REVIEW_TOKEN_BUDGET, WINDOW_PADDING
+from .index import Definition, changed_definitions
 from .project import is_ignored, load_ignore
 from .schema import FileContext, FileDiff, ReviewRequest
 
@@ -39,47 +40,91 @@ def render_numbered(content: str, changed: set[int], lo: int = 1, hi: int | None
     return "\n".join(out)
 
 
-def build_file_context(fd: FileDiff) -> FileContext | None:
-    if fd.is_binary or fd.change_type == "deleted" or not fd.content_after:
-        return None
+def touched_definitions(fd: FileDiff) -> list[Definition]:
+    """The definitions this change edited. Python only, same as expansion —
+    another language gets none and falls back to padded windows."""
+    if not fd.path.endswith((".py", ".pyi")) or not fd.content_after:
+        return []
+    return changed_definitions(fd.content_after, fd.changed_lines, fd.path)
 
-    changed = fd.changed_lines
-    whole = render_numbered(fd.content_after, changed)
 
-    if estimate(whole) <= FILE_TOKEN_BUDGET:
-        return FileContext(
-            path=fd.path, content=whole, strategy="whole_file", tokens=estimate(whole)
-        )
+def _spans(fd: FileDiff, total: int, definitions: list[Definition]) -> list[tuple[int, int]]:
+    """One span per hunk, widened to whole definitions where there are any.
 
-    # Too big: keep padded windows around each hunk, joined by explicit gap markers
-    # so the model can see that it is not looking at a contiguous file.
-    total = len(fd.content_after.splitlines())
+    Half a function is the worst thing to hand a reviewer: it cannot see the guard
+    clause above the change or the return below it, so it either invents one or
+    stays quiet about a real defect. Padding is a guess at where the function
+    starts; the parser knows.
+    """
     spans: list[tuple[int, int]] = []
     for h in fd.hunks:
         lo = max(1, h.new_start - WINDOW_PADDING)
         hi = min(total, h.new_end + WINDOW_PADDING)
-        if spans and lo <= spans[-1][1] + 1:
-            spans[-1] = (spans[-1][0], max(spans[-1][1], hi))
-        else:
-            spans.append((lo, hi))
+        for d in definitions:
+            if d.start <= h.new_end and h.new_start <= d.end:
+                lo = min(lo, d.start)
+                hi = max(hi, min(d.end, total))
+        spans.append((lo, hi))
 
+    merged: list[tuple[int, int]] = []
+    for lo, hi in sorted(spans):
+        if merged and lo <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
+        else:
+            merged.append((lo, hi))
+    return merged
+
+
+def _render_spans(
+    content: str, changed: set[int], spans: list[tuple[int, int]], total: int
+) -> str:
+    """Spans joined by explicit gap markers, so the model can see that what it is
+    reading is not a contiguous file."""
     chunks: list[str] = []
     prev_hi = 0
     for lo, hi in spans:
         if lo > prev_hi + 1:
             chunks.append(f"      … lines {prev_hi + 1}-{lo - 1} omitted …")
-        chunks.append(render_numbered(fd.content_after, changed, lo, hi))
+        chunks.append(render_numbered(content, changed, lo, hi))
         prev_hi = hi
     if prev_hi < total:
         chunks.append(f"      … lines {prev_hi + 1}-{total} omitted …")
+    return "\n".join(chunks)
 
-    windowed = "\n".join(chunks)
+
+def build_file_context(fd: FileDiff) -> FileContext | None:
+    if fd.is_binary or fd.change_type == "deleted" or not fd.content_after:
+        return None
+
+    changed = fd.changed_lines
+    definitions = touched_definitions(fd)
+    names = [d.name for d in definitions]
+    whole = render_numbered(fd.content_after, changed)
+
+    if estimate(whole) <= FILE_TOKEN_BUDGET:
+        return FileContext(
+            path=fd.path,
+            content=whole,
+            strategy="whole_file",
+            tokens=estimate(whole),
+            definitions=names,
+        )
+
+    total = len(fd.content_after.splitlines())
+    windowed = _render_spans(fd.content_after, changed, _spans(fd, total, definitions), total)
+
+    if definitions and estimate(windowed) > FILE_TOKEN_BUDGET:
+        # The enclosing definitions are too large to show whole. A padded window
+        # at least keeps the changed lines and their immediate surroundings.
+        windowed = _render_spans(fd.content_after, changed, _spans(fd, total, []), total)
+
     return FileContext(
         path=fd.path,
         content=windowed,
         strategy="windowed",
         tokens=estimate(windowed),
         truncated=True,
+        definitions=names,
     )
 
 

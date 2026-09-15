@@ -23,8 +23,22 @@ from .schema import ReviewRequest, ReviewResult
 _SEVERITY_STYLE = {"high": "bold red", "medium": "yellow", "low": "cyan"}
 
 
-def render_json(result: ReviewResult, console: Console | None = None) -> None:
-    """Stable machine-readable review output for CI and coding agents."""
+def render_json(
+    result: ReviewResult, request: ReviewRequest | None = None, console: Console | None = None
+) -> None:
+    """Machine-readable review output for CI and coding agents.
+
+    Takes the same arguments in the same order as `render`, deliberately. The two
+    used to differ, the call sites picked between them with a ternary and then
+    called whichever they got with one signature, and every json run died on
+    arity — a shape that type-checks and cannot work.
+
+    The document says the same things the terminal does. Everything the text
+    report derives — which findings the gate threw out and why, which files were
+    skipped, which edges cross between files the change touches — is computed
+    here too, rather than left as a join for the reader to redo and get subtly
+    different answers from.
+    """
     console = console or Console()
 
     def encode(value):
@@ -34,7 +48,44 @@ def render_json(result: ReviewResult, console: Console | None = None) -> None:
             return value.model_dump(mode="json")
         raise TypeError(f"cannot encode {type(value).__name__}")
 
-    console.print_json(json.dumps(result.model_dump(), default=encode, sort_keys=True))
+    payload = result.model_dump()
+
+    verdicts = {v.finding_id: v for v in result.verdicts}
+    verdicts.update({v.finding_id: v for v in getattr(result, "consensus", []) or []})
+    accepted = {f.id for f in result.accepted}
+    payload["rejected"] = [
+        {**f.model_dump(mode="json"), "reasoning": verdicts[f.id].reasoning}
+        for f in result.merged
+        if f.id not in accepted and f.id in verdicts and verdicts[f.id].status == "REJECTED"
+    ]
+
+    # A deliberate shape rather than a dumped dataclass: `edges` is typed `object`
+    # on the result, so what pydantic makes of it is an implementation detail and
+    # a poor thing to hand anyone as a contract.
+    changed = {e.caller for e in result.edges}
+    payload["edges"] = [
+        {
+            "caller": e.caller,
+            "calls": e.name,
+            "path": e.definition.path,
+            "line": e.definition.start,
+            "kind": e.definition.kind,
+            # The same one-liners the boxes show, so a machine rendering this
+            # elsewhere can describe the code rather than just name it.
+            "doc": e.definition.doc,
+            "shown_to_reviewers": e.shown,
+            "cross_file": e.definition.path != e.caller,
+            "in_change": e.definition.path in changed,
+        }
+        for e in result.edges
+    ]
+
+    payload["files"] = {
+        "reviewed": [f.path for f in request.reviewable] if request else [],
+        "skipped": list(request.skipped) if request else [],
+    }
+
+    console.print_json(json.dumps(payload, default=encode, sort_keys=True))
 
 
 def render_problems(result: ReviewResult, console: Console) -> None:
@@ -92,16 +143,49 @@ def render_rejected(result: ReviewResult, console: Console, limit: int = 4) -> N
         console.print(f"  [dim]...and {len(rejected) - limit} more[/dim]")
 
 
-def render_changes(result: ReviewResult, console: Console, limit: int = 8) -> None:
-    """What the changed code reaches, and where that lives.
+def _box(path: str, summary: str, changed: bool, used: list, width: int) -> Panel:
+    """One file as a box: what it is for, and which of its parts are in play.
+
+    The summary is the first sentence of the file's own module docstring. It is
+    there for the reader who has never opened this repository, for whom a diff is
+    a list of edits to files they cannot name the purpose of.
+    """
+    body = Text()
+    body.append(summary or "(no description in this file)",
+                style="" if summary else "dim italic")
+    if used:
+        body.append("\n\nwhat this change uses from it:", style="dim")
+        for defn in used:
+            body.append(f"\n  {defn.name}()", style="cyan")
+            # Trimmed to the line rather than wrapped: Rich hangs a continuation
+            # at column 0 inside a panel, which reads as a new entry.
+            room = width - len(defn.name) - 10
+            if defn.doc and room > 12:
+                doc = defn.doc if len(defn.doc) <= room else defn.doc[: room - 1].rstrip() + "…"
+                body.append(f"  {doc}", style="dim")
+    return Panel(
+        body,
+        title=Text(path, style="bold"),
+        subtitle=Text("changed here", style="yellow") if changed else None,
+        title_align="left",
+        subtitle_align="right",
+        border_style="yellow" if changed else "dim",
+        width=width,
+    )
+
+
+def render_changes(result: ReviewResult, console: Console, limit: int = 6) -> None:
+    """A picture of the change, for someone who has not seen this codebase.
+
+    Every file the change touches or reaches gets a box saying what it is for,
+    and the calls between them are drawn as labelled arrows. The point is that a
+    review lands on people who do not know the repository: a finding about
+    `gather()` means nothing until you know that `index.py` reads the repository
+    so a reviewer can follow what a change calls.
 
     Cross-file calls only. A function calling its neighbour in the same file is
-    something the reader can already see in the diff, and listing those buried
-    the handful of edges that matter under thirty that did not — on one real
-    change, 38 lines of which 11 were worth reading.
-
-    Ordered so calls into another file *of the same change* come first: that is
-    where a defect hides, because it is invisible in either file on its own.
+    already visible in the diff, and listing those buried the handful of edges
+    that mattered — on one real change, 38 lines of which 11 were worth reading.
     """
     changed = {e.caller for e in result.edges}
     edges = [e for e in result.edges if e.definition.path != e.caller]
@@ -112,29 +196,57 @@ def render_changes(result: ReviewResult, console: Console, limit: int = 8) -> No
     for edge in edges:
         by_caller.setdefault(edge.caller, []).append(edge)
 
+    width = min(console.width - 4, 96)
     console.print()
-    console.print("  [bold]What this change reaches[/bold]")
-    shown = 0
-    for caller, calls in sorted(by_caller.items()):
-        console.print(f"    [bold]{escape(caller)}[/bold]")
+    console.print("  [bold]How this change fits together[/bold]")
+    console.print()
+
+    shown = inside = 0
+    for caller, calls in sorted(by_caller.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        console.print(Padding(
+            _box(caller, result.summaries.get(caller, ""), True, [], width), (0, 0, 0, 2)
+        ))
+        # Calls into another file of the same change come first: that is where a
+        # defect hides, because it is invisible in either file on its own.
         calls.sort(key=lambda e: (e.definition.path not in changed, e.name))
-        for edge in calls[:limit]:
+        for i, edge in enumerate(calls[:limit]):
             target = edge.definition
-            line = Text("      ")
-            line.append("calls ", style="dim")
-            line.append(f"{target.name}()", style="cyan")
-            line.append(" " * max(1, 22 - len(target.name)))
-            line.append(f"{target.path}:{target.start}", style="dim")
+            elbow = "└" if i == len(calls[:limit]) - 1 and len(calls) <= limit else "├"
+            arrow = Text(f"     {elbow}──▶ ", style="dim")
+            arrow.append(f"{target.name}()", style="cyan")
+            arrow.append(f"  {target.path}:{target.start}", style="dim")
             if target.path in changed:
-                line.append("  also changed here", style="yellow")
-            console.print(line)
+                arrow.append("  ← also changed", style="yellow")
+                inside += 1
+            elif target.doc:
+                arrow.append(f"\n            {target.doc}", style="dim italic")
+            console.print(arrow)
             shown += 1
         if len(calls) > limit:
-            console.print(f"      [dim]...and {len(calls) - limit} more[/dim]")
+            console.print(f"     [dim]└── …and {len(calls) - limit} more[/dim]")
+        console.print()
+
+    # The files reached but never changed, described once each rather than on
+    # every arrow that lands on them.
+    outside = {e.definition.path for e in edges} - changed
+    if outside:
+        console.print("  [dim]…and what it leans on, unchanged:[/dim]")
+        console.print()
+    for path in sorted(outside)[:limit]:
+        used = sorted({e.definition for e in edges if e.definition.path == path},
+                      key=lambda d: d.name)
+        console.print(Padding(
+            _box(path, result.summaries.get(path, ""), False, used, width - 4), (0, 0, 1, 6)
+        ))
+    if len(outside) > limit:
+        console.print(f"      [dim]…and {len(outside) - limit} more file(s)[/dim]\n")
+
     console.print(
-        f"  [dim]{shown} cross-file call(s). Calls within one file are left out, "
-        "and so are names defined in two places or imported from outside this "
-        "repo — a wrong edge is worse than a missing one.[/dim]"
+        f"  [dim]{shown} cross-file call(s)"
+        + (f", [yellow]{inside}[/yellow][dim] between files this change touches"
+           if inside else "")
+        + ". Calls inside one file are left out, and so are names defined in two "
+        "places or imported from outside this repo.[/dim]"
     )
 
 

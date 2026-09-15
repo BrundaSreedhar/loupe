@@ -7,6 +7,12 @@ verbosity switch.
 Third-party loggers are pinned quieter than ours on purpose: at INFO, httpx logs
 one line per HTTP request and google.genai logs a retry banner, which buries the
 handful of lines that are actually about your review.
+
+The root logger is the default-deny half of that. Naming noisy libraries one by
+one only silences the ones already known: the Anthropic SDK moved to `httpx2`,
+which was not on the list, so every model call printed a request line straight
+through a running spinner. Root sits at WARNING and the two loggers we own are
+raised explicitly, so a new dependency is quiet until someone decides otherwise.
 """
 
 from __future__ import annotations
@@ -16,7 +22,19 @@ import logging
 from rich.console import Console
 from rich.logging import RichHandler
 
-_NOISY = ("httpx", "httpcore", "google_genai", "google.genai", "urllib3", "langsmith")
+# httpx2/httpcore2 are what the Anthropic SDK talks through, httpx/httpcore what
+# google-genai and the GitHub adapter use. Which pair is loud depends on the
+# provider, so both are named.
+_NOISY = (
+    "httpx",
+    "httpcore",
+    "httpx2",
+    "httpcore2",
+    "google_genai",
+    "google.genai",
+    "urllib3",
+    "langsmith",
+)
 
 # Warnings from a dependency about how *another* dependency calls it. Nothing the
 # user of this tool can act on, and they fire on every single model call. Dropped
@@ -50,7 +68,11 @@ def setup_logging(verbosity: int = 0, console: Console | None = None) -> None:
     for existing in list(root.handlers):
         root.removeHandler(existing)
     root.addHandler(handler)
-    root.setLevel(logging.DEBUG if verbosity >= 2 else logging.INFO)
+    # WARNING, not INFO. A library inherits this unless it is named below, so an
+    # unlisted dependency is quiet by default rather than loud by default. The two
+    # loggers we own are raised straight after, and a record that passes its own
+    # logger's level still reaches the handler whatever root's level is.
+    root.setLevel(logging.DEBUG if verbosity >= 2 else logging.WARNING)
 
     logging.getLogger("loupe").setLevel(level)
     logging.getLogger("evals").setLevel(level)

@@ -105,6 +105,7 @@ def _assemble(
     accepted: list[Finding] = final.get("accepted") or []
     delta = final.get("delta")
     edges = list(final.get("edges") or [])
+    summaries = dict(final.get("summaries") or {})
     problems: list[Problem] = list(final.get("problems") or [])
     fell_back = usage()
     if fell_back:
@@ -130,6 +131,7 @@ def _assemble(
         problems=problems,
         delta=delta,
         edges=edges,
+        summaries=summaries,
         usage={
             "raw_count": len(raw),
             "merged_count": len(merged),

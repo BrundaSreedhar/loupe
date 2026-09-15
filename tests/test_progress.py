@@ -17,7 +17,7 @@ from loupe.index import Definition, Edge
 from loupe.lint import LintIssue
 from loupe.progress import Reporter, reporter
 from loupe.safety import SafetyIssue
-from loupe.schema import Verdict
+from loupe.schema import FileContext, Verdict
 
 
 def run(node: str, inputs: dict, outputs: dict) -> str:
@@ -61,15 +61,51 @@ def test_everything_rejected_reads_as_rejection_not_as_silence():
     assert "nothing stood up" in text
 
 
+def _ctx(path: str, definitions: list[str] | None = None) -> FileContext:
+    return FileContext(
+        path=path,
+        content="",
+        strategy="whole_file",
+        tokens=1,
+        definitions=definitions or [],
+    )
+
+
 def test_the_files_being_reviewed_are_named():
-    text = run("prepare", {}, {"contexts": {"src/a.py": 1, "src/b.py": 2}, "dropped": []})
+    text = run(
+        "prepare", {}, {"contexts": {"src/a.py": _ctx("src/a.py"), "src/b.py": _ctx("src/b.py")},
+                        "dropped": []}
+    )
     assert "2 files" in text
     assert "src/a.py" in text and "src/b.py" in text
 
 
 def test_a_file_dropped_for_budget_is_not_passed_over_in_silence():
-    text = run("prepare", {}, {"contexts": {"src/a.py": 1}, "dropped": ["src/huge.py"]})
+    text = run("prepare", {}, {"contexts": {"src/a.py": _ctx("src/a.py")},
+                               "dropped": ["src/huge.py"]})
     assert "over budget" in text
+
+
+def test_the_definitions_a_change_touched_are_counted():
+    text = run(
+        "prepare",
+        {},
+        {
+            "contexts": {
+                "src/a.py": _ctx("src/a.py", ["save", "load"]),
+                "src/b.py": _ctx("src/b.py", ["run"]),
+            },
+            "dropped": [],
+        },
+    )
+    assert "touching 3 definitions" in text
+
+
+def test_a_change_touching_no_definition_says_nothing_about_definitions():
+    """A diff of imports and constants touches none. "touching 0 definitions" is
+    noise; saying nothing is the honest rendering."""
+    text = run("prepare", {}, {"contexts": {"src/a.py": _ctx("src/a.py")}, "dropped": []})
+    assert "definition" not in text
 
 
 def test_the_secret_scan_reports_both_outcomes():
@@ -105,12 +141,35 @@ def test_a_stage_with_no_news_announces_itself_but_claims_nothing():
     a pipe the same text is printed instead. What a stage must not do is invent a
     result: a linter that found nothing reports nothing."""
     text = run("lint", {}, {"lint_issues": []})
-    assert "linters" in text
+    assert text.strip(), "the stage never said it was running"
     assert "issue" not in text
 
     text = run("expand", {}, {"edges": [], "references": []})
-    assert "following what the change calls" in text
+    assert text.strip()
     assert "definition" not in text
+
+
+def test_every_stage_names_a_spinner_rich_actually_has():
+    """An unknown spinner name raises at the first frame, which would take the
+    review down for the sake of decoration."""
+    from rich.spinner import SPINNERS
+
+    from loupe.progress import _SPINNERS
+
+    assert set(_SPINNERS.values()) <= set(SPINNERS)
+
+
+def test_each_reviewer_keeps_one_colour():
+    """Four branches run at once. Telling them apart is the point of the colour,
+    so the spinner and the line it leaves behind have to agree."""
+    from loupe.progress import _ROLE_STYLE
+
+    console = Console(file=io.StringIO(), width=120)
+    handler = Reporter(console)
+    line = handler._after_specialist({"role": "security"}, {"findings": []})
+
+    assert _ROLE_STYLE["security"] in line
+    assert set(_ROLE_STYLE) >= {"security", "correctness", "performance", "maintainability"}
 
 
 def test_the_last_line_says_whether_anything_survived():

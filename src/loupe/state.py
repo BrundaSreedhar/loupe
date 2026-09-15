@@ -13,7 +13,7 @@ from typing import Annotated, Literal, NotRequired
 
 from typing_extensions import TypedDict
 
-from .index import Edge, Reference
+from .index import Definition, Edge, Reference
 from .lint import LintIssue
 from .safety import SafetyIssue
 from .schema import FileContext, Finding, Problem, ReviewRequest, Verdict
@@ -31,6 +31,11 @@ class ReviewState(TypedDict):
     # Every call from a changed line to a definition this repo owns — including
     # the ones whose source the prompt left out. Drawn for the reader, not sent.
     edges: NotRequired[list[Edge]]
+    # path -> one line on what that file is for, for the diagram in the report.
+    summaries: NotRequired[dict[str, str]]
+    # The definitions this change edited, from the changed files' own trees. The
+    # unit the reverse lookups — callers, tests, history — are all keyed by.
+    changed: NotRequired[list[Definition]]
 
     mode: Literal["single", "multi"]
     verify: bool

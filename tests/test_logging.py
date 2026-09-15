@@ -83,6 +83,45 @@ def test_setup_logging_quiets_http_chatter_by_default():
     setup_logging(0)
 
 
+def test_an_unlisted_dependency_is_quiet_by_default():
+    """The bug: naming noisy libraries one at a time only silences the known ones.
+
+    The Anthropic SDK talks through `httpx2`, which was not on the list, so every
+    model call printed an HTTP request line through a running spinner. Root sits at
+    WARNING so anything not explicitly raised is quiet, whatever it is called.
+    """
+    import io
+
+    console = Console(file=io.StringIO(), width=120, no_color=True)
+    setup_logging(1, console=console)
+
+    logging.getLogger("httpx2").info('HTTP Request: POST https://api.anthropic.com "200 OK"')
+    logging.getLogger("some.brand.new.dependency").info("chatter nobody asked for")
+    logging.getLogger("loupe.nodes.specialists").info("a line about your review")
+
+    out = console.file.getvalue()
+    assert "api.anthropic.com" not in out
+    assert "chatter nobody asked for" not in out
+    # ...and ours still gets through, which is the half that makes -v worth typing.
+    assert "a line about your review" in out
+    setup_logging(0)
+
+
+def test_the_log_handler_shares_the_console_it_was_given():
+    """Rich only coordinates a live region with its own Console. A second one writes
+    straight to the terminal at wherever the cursor is, which is mid-spinner."""
+    import io
+
+    from rich.logging import RichHandler
+
+    console = Console(file=io.StringIO(), width=120, no_color=True)
+    setup_logging(1, console=console)
+    handlers = [h for h in logging.getLogger().handlers if isinstance(h, RichHandler)]
+    assert handlers, "no RichHandler installed"
+    assert handlers[0].console is console
+    setup_logging(0)
+
+
 def test_dependency_chatter_is_dropped_but_real_warnings_survive():
     """google_genai warns on every call about how langchain calls it. The user
     cannot act on it and it fires constantly; a genuine SDK warning must still

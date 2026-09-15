@@ -33,7 +33,7 @@ def expand(state: ReviewState) -> dict:
         return {}
 
     try:
-        references, stats, edges = gather(
+        found = gather(
             request,
             contexts,
             max_files=INDEX_MAX_FILES,
@@ -43,6 +43,7 @@ def expand(state: ReviewState) -> dict:
             visible_lines=valid_lines,
             on_secret=ON_SECRET,
         )
+        references, stats, edges = found.references, found.stats, found.edges
     except Exception as exc:  # noqa: BLE001 — expansion is an improvement to the
         # context, never a precondition for reviewing. Losing it costs recall on
         # cross-file defects and nothing else, so it must not fail the review.
@@ -54,7 +55,9 @@ def expand(state: ReviewState) -> dict:
         )]}
 
     if not stats.files_indexed:
-        return {}
+        # No repository to read, but the changed files parsed fine — and what this
+        # change edited does not depend on the index.
+        return {"changed": found.changed}
 
     log.info(
         "index: %d file(s)%s · %d name(s) called from changed lines → "
@@ -90,4 +93,10 @@ def expand(state: ReviewState) -> dict:
                    f"(over LOUPE_INDEX_TOKEN_BUDGET)",
         ))
 
-    return {"references": references, "edges": edges, "problems": problems}
+    return {
+        "references": references,
+        "edges": edges,
+        "summaries": found.summaries,
+        "changed": found.changed,
+        "problems": problems,
+    }

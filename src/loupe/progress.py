@@ -34,10 +34,57 @@ from uuid import UUID
 from langchain_core.callbacks import BaseCallbackHandler
 from rich.console import Console
 from rich.markup import escape
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.progress import Progress, ProgressColumn, TextColumn, TimeElapsedColumn
+from rich.spinner import Spinner
 
 # Nodes worth narrating. Anything else in the graph is bookkeeping.
 _ROUTERS = {"fan_out", "route_verify", "route_consensus"}
+
+# A different spinner per stage, so the shape of the animation tells you what is
+# running before you have read the words. Names are cli-spinners', which Rich
+# ships; an unknown one raises, so they are checked by a test rather than trusted.
+_SPINNERS = {
+    "preflight": "shark",        # something swimming through the diff, looking
+    "prepare": "boxBounce",      # cutting windows
+    "expand": "arrow3",          # following calls outward
+    "lint": "bouncingBar",       # a tool sweeping the files
+    "warm_cache": "moon",        # warming
+    "specialist": "dots",        # four of these at once; the calm one
+    "dedupe": "arc",             # folding together
+    "verify": "toggle",          # weighing it up
+    "reconsider": "balloon2",    # second thoughts
+    "finalize": "star",          # the survivors
+}
+
+# Each reviewer keeps one colour everywhere it appears — spinner, and the line it
+# leaves behind — so four parallel branches stay tellable apart at a glance.
+_ROLE_STYLE = {
+    "security": "red",
+    "correctness": "green",
+    "performance": "yellow",
+    "maintainability": "blue",
+    "generalist": "cyan",
+    "combined": "magenta",
+}
+
+
+class _StageSpinner(ProgressColumn):
+    """A spinner column where each task picks its own animation and colour.
+
+    Rich's own SpinnerColumn holds one spinner for the whole column, which would
+    make four reviewers and a verification pass look identical while they run.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._cache: dict[tuple[str, str], Spinner] = {}
+
+    def render(self, task):  # noqa: ANN001 — Rich's signature
+        key = (task.fields.get("spinner", "dots"), task.fields.get("style", "cyan"))
+        spinner = self._cache.get(key)
+        if spinner is None:
+            spinner = self._cache[key] = Spinner(key[0], style=key[1])
+        return spinner.render(task.get_time())
 
 
 def _plural(n: int, one: str, many: str | None = None) -> str:
@@ -71,7 +118,7 @@ class Reporter(BaseCallbackHandler):
         self._animate = console.is_terminal
         self._progress = (
             Progress(
-                SpinnerColumn(style="cyan"),
+                _StageSpinner(),
                 TextColumn("[dim]{task.description}[/dim]"),
                 TimeElapsedColumn(),
                 console=console,
@@ -100,7 +147,7 @@ class Reporter(BaseCallbackHandler):
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    def _start_task(self, run_id: UUID, label: str) -> None:
+    def _start_task(self, run_id: UUID, label: str, name: str, payload: dict) -> None:
         if self._progress is None:
             return
         with self._lock:
@@ -108,7 +155,12 @@ class Reporter(BaseCallbackHandler):
                 return
             if not self._tasks:
                 self._progress.start()
-            self._tasks[run_id] = self._progress.add_task(label, total=None)
+            self._tasks[run_id] = self._progress.add_task(
+                label,
+                total=None,
+                spinner=_SPINNERS.get(name, "dots"),
+                style=_ROLE_STYLE.get(payload.get("role", ""), "cyan"),
+            )
 
     def _end_task(self, run_id: UUID) -> None:
         if self._progress is None:
@@ -143,7 +195,7 @@ class Reporter(BaseCallbackHandler):
             # loses which reviewer opened what and which file is being checked.
             self._say(label)
         else:
-            self._start_task(run_id, label)
+            self._start_task(run_id, label, name, payload)
 
     def on_chain_end(self, outputs, *, run_id=None, **kwargs) -> None:  # noqa: ANN001
         self._end_task(run_id)
@@ -170,22 +222,25 @@ class Reporter(BaseCallbackHandler):
         if name == "specialist":
             role = payload.get("role", "generalist")
             files = len(payload.get("contexts") or {})
-            return f"{role} reviewer reading {_plural(files, 'file')}"
+            return f"the {role} reviewer is reading {_plural(files, 'file')}"
         if name == "verify":
             claims = len(payload.get("findings") or [])
-            return f"checking {_plural(claims, 'claim')} against {_safe(payload.get('path', '?'))}"
+            return (
+                f"cross-examining {_plural(claims, 'claim')} against all of "
+                f"{_safe(payload.get('path', '?'))}"
+            )
         if name == "reconsider":
             finding = payload.get("finding")
             where = _safe(f"{finding.file}:{finding.line}") if finding is not None else "a finding"
-            return f"asking again about {where}"
+            return f"sleeping on {where} — the first two answers disagreed"
         return {
-            "preflight": "scanning for credentials and planted instructions",
-            "prepare": "windowing the changed files",
-            "expand": "following what the change calls",
+            "preflight": "sniffing the diff for secrets and planted instructions",
+            "prepare": "cutting a window around every change",
+            "expand": "chasing calls out of the diff and into the repo",
             "lint": "letting the repo's own linters go first",
-            "warm_cache": "warming the shared prefix",
-            "dedupe": "merging findings that describe one defect",
-            "finalize": "ranking what survived",
+            "warm_cache": "warming one prefix for four readers to share",
+            "dedupe": "folding findings that describe one defect together",
+            "finalize": "ranking the survivors",
         }.get(name)
 
     # ─── what each stage leaves behind ──────────────────────────────────────
@@ -209,7 +264,11 @@ class Reporter(BaseCallbackHandler):
         names = ", ".join(_safe(p) for p in sorted(contexts)[:3])
         more = f" and {len(contexts) - 3} more" if len(contexts) > 3 else ""
         tail = f" · [yellow]{len(dropped)} left out, over budget[/yellow]" if dropped else ""
-        return f"windowed {_plural(len(contexts), 'file')} — {names}{more}{tail}"
+        # getattr, not attribute access: this is a display path, and a callback
+        # that raises takes the whole review down with it.
+        touched = sum(len(getattr(c, "definitions", ()) or ()) for c in contexts.values())
+        hit = f", touching {_plural(touched, 'definition')}" if touched else ""
+        return f"windowed {_plural(len(contexts), 'file')} — {names}{more}{hit}{tail}"
 
     def _after_expand(self, payload: dict, outputs: dict) -> str | None:
         references = outputs.get("references") or []
@@ -234,8 +293,9 @@ class Reporter(BaseCallbackHandler):
         found = len(outputs.get("findings") or [])
         with self._lock:
             self._raw += found
+        style = _ROLE_STYLE.get(role, "cyan")
         verdict = "nothing" if not found else f"[bold]{_plural(found, 'finding')}[/bold]"
-        return f"[cyan]{role}[/cyan] reviewer says {verdict}"
+        return f"[{style}]{role}[/{style}] reviewer says {verdict}"
 
     def _after_dedupe(self, payload: dict, outputs: dict) -> str:
         merged = outputs.get("merged") or []

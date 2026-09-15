@@ -15,9 +15,22 @@ from .emit import post_to_github, render, render_json
 from .logs import setup_logging
 from .privacy import assurance, destinations
 from .runner import run_review
+from .schema import ReviewResult
 
 app = typer.Typer(add_completion=False, help="Multi-agent code reviewer.")
 console = Console()
+
+
+def _logging_for(output: str, verbose: int) -> None:
+    """Point the log handler at the same Console the spinners use.
+
+    Rich coordinates a live region with its own Console and nothing else. Handed a
+    second Console — which is what `setup_logging` builds when nobody passes it one
+    — log lines go straight to the terminal at wherever the cursor happens to be,
+    which is the middle of a spinner. In json mode they stay on stderr, because
+    stdout has to hold one parseable document and nothing else.
+    """
+    setup_logging(verbose, console=console if output == "text" else None)
 
 
 def _preflight() -> None:
@@ -83,9 +96,9 @@ def local(
     verbose: int = Verbose,
 ) -> None:
     """Review a local diff."""
-    setup_logging(verbose)
     if output not in {"text", "json"}:
         raise typer.BadParameter("--output must be text or json")
+    _logging_for(output, verbose)
     _preflight()
     try:
         request = local_git.load(
@@ -94,18 +107,29 @@ def local(
     except GitError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from exc
+    # Everything below that is written for a person goes to stdout, which in json
+    # mode has to hold one parseable document and nothing else.
+    talking = output == "text"
+
     if not request.reviewable:
-        _explain_nothing(request, "staged changes" if staged else f"{ref}..working tree")
+        if talking:
+            _explain_nothing(request, "staged changes" if staged else f"{ref}..working tree")
+        else:
+            # A machine asked a question and is owed an answer in the format it
+            # asked for. "Nothing to review" is a result, not an error.
+            render_json(ReviewResult(request_ref=ref, mode=mode, verified=not no_verify),
+                        request, console)
         raise typer.Exit(0)
 
-    if request.skipped:
-        console.print(f"[dim]Skipping {len(request.skipped)} non-source file(s): "
-                      f"{', '.join(escape(p) for p in request.skipped[:4])}"
-                      f"{'…' if len(request.skipped) > 4 else ''}[/dim]")
-    console.print(
-        f"[dim]Reviewing {len(request.reviewable)} file(s) · mode={mode} · "
-        f"{PROVIDER}/{MODEL}[/dim]"
-    )
+    if talking:
+        if request.skipped:
+            console.print(f"[dim]Skipping {len(request.skipped)} non-source file(s): "
+                          f"{', '.join(escape(p) for p in request.skipped[:4])}"
+                          f"{'…' if len(request.skipped) > 4 else ''}[/dim]")
+        console.print(
+            f"[dim]Reviewing {len(request.reviewable)} file(s) · mode={mode} · "
+            f"{PROVIDER}/{MODEL}[/dim]"
+        )
     result = run_review(
         request, mode=mode, verify=not no_verify, remember=not fresh,
         # A spinner reading "Reviewing…" for two minutes cannot tell a clean
@@ -113,7 +137,13 @@ def local(
         # narration on stdout would be output nobody can parse.
         progress=console if output == "text" else None,
     )
-    (render_json if output == "json" else render)(result, request, console)
+    # Branched rather than picked with a ternary: the two renderers do not take
+    # the same arguments, and a ternary that calls whichever it chose with one
+    # signature type-checks fine and fails on every json run.
+    if output == "json":
+        render_json(result, request, console)
+    else:
+        render(result, request, console)
 
 
 @app.command()
@@ -129,7 +159,7 @@ def pr(
     verbose: int = Verbose,
 ) -> None:
     """Review a GitHub pull request."""
-    setup_logging(verbose)
+    _logging_for(output, verbose)
     if MODE == "offline":
         console.print("[red]PR review is unavailable in offline mode.[/red] Use `loupe local`.")
         raise typer.Exit(1)
@@ -137,22 +167,34 @@ def pr(
         raise typer.BadParameter("--output must be text or json")
     _preflight()
     request = github_pr.load(repo, number)
+    talking = output == "text"
+
     if not request.reviewable:
-        _explain_nothing(request, f"{repo}#{number}")
+        if talking:
+            _explain_nothing(request, f"{repo}#{number}")
+        else:
+            render_json(ReviewResult(request_ref=f"{repo}#{number}", mode=mode,
+                                     verified=not no_verify), request, console)
         raise typer.Exit(0)
 
-    console.print(f"[dim]Reviewing {repo}#{number} · {len(request.reviewable)} file(s)[/dim]")
+    if talking:
+        console.print(f"[dim]Reviewing {repo}#{number} · {len(request.reviewable)} file(s)[/dim]")
     result = run_review(
         request, mode=mode, verify=not no_verify, run_name=f"{repo}#{number}",
-        progress=console if output == "text" else None,
+        progress=console if talking else None,
     )
-    (render_json if output == "json" else render)(result, request, console)
+    if talking:
+        render(result, request, console)
+    else:
+        render_json(result, request, console)
 
     if not post:
-        console.print("[dim]Dry run — nothing posted. Pass --post to publish.[/dim]")
+        if talking:
+            console.print("[dim]Dry run — nothing posted. Pass --post to publish.[/dim]")
         return
     if not result.accepted:
-        console.print("[dim]No findings; nothing to post.[/dim]")
+        if talking:
+            console.print("[dim]No findings; nothing to post.[/dim]")
         return
 
     typer.confirm(

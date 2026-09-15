@@ -100,6 +100,11 @@ class FileContext(BaseModel):
     strategy: Literal["whole_file", "windowed", "diff_only"]
     tokens: int
     truncated: bool = False
+    # Names of the definitions this change edited in this file. Names only —
+    # the full objects live in `ReviewState.changed`, which is what the reverse
+    # lookups key on; this is here so the progress line can count them without
+    # waiting for the repository index.
+    definitions: list[str] = Field(default_factory=list)
 
 
 # ─── Output ─────────────────────────────────────────────────────────────────
@@ -276,6 +281,9 @@ class ReviewResult(BaseModel):
     # defines it imports this one, and inverting that to gain an annotation is a
     # worse trade than the annotation is worth.
     edges: list[object] = Field(default_factory=list)
+    # path -> one line on what that file is for, so the report can say what each
+    # box in the diagram is before a newcomer has to guess from the name.
+    summaries: dict[str, str] = Field(default_factory=dict)
     usage: dict[str, float] = Field(default_factory=dict)
     # Kept apart from `usage`, which is flat counts and rates. Tokens are
     # structured — per model, and split by how the cache treated them.
