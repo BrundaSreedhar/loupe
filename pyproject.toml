@@ -54,3 +54,4 @@ select = ["E", "F", "W", "I", "B", "C4", "UP", "S", "BLE", "PIE"]
 "evals/mutations.py" = ["S608"]
 # Invoking `git` from PATH with a fixed argument list.
 "src/loupe/adapters/local_git.py" = ["S603", "S607"]
+"evals/seedset.py" = ["S603", "S607"]

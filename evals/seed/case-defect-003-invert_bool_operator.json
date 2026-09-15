@@ -1,0 +1,41 @@
+{
+  "id": "defect-003-invert_bool_operator",
+  "kind": "defect",
+  "request": {
+    "body": "",
+    "files": [
+      {
+        "change_type": "modified",
+        "content_after": "\"\"\"Falling back to a second model when the day's quota is gone.\n\nLangChain's own `with_fallbacks` takes exception *types*, which is too blunt here:\na per-minute limit and a per-day exhaustion are both 429s, and falling back on the\nfirst would swap models over a seven-second hiccup. Only a confirmed daily\nexhaustion is worth switching for; everything else should wait and retry.\n\nThe daily cap is per model, so a second model is a second allowance. Falling back\nis recorded, not just logged: a review answered partly by another model is a\ndifferent artefact, and a set of eval numbers containing both measures neither.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport logging\nimport threading\nfrom typing import Any\n\nfrom .quota import classify\n\nlog = logging.getLogger(__name__)\n\n_state = threading.local()\n\n\ndef reset_usage() -> None:\n    _state.used = set()\n\n\ndef record(label: str) -> None:\n    if not hasattr(_state, \"used\"):\n        reset_usage()\n    _state.used.add(label)\n\n\ndef usage() -> set[str]:\n    \"\"\"Which stages ran on the local model during this thread's review.\"\"\"\n    return set(getattr(_state, \"used\", set()))\n\n\nclass QuotaFallback:\n    \"\"\"Wraps a primary model call, switching to a spare one on daily exhaustion.\n\n    Only `invoke` is implemented because that is all the nodes call. It is not a\n    full Runnable, so it does not appear as its own span in tracing \u2014 the inner\n    calls still do, which is where the useful detail is anyway.\n    \"\"\"\n\n    def __init__(self, primary: Any, fallback: Any, label: str) -> None:\n        self.primary = primary\n        self.fallback = fallback\n        self.label = label\n\n    def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:\n        try:\n            return self.primary.invoke(input, config, **kwargs)\n        except Exception as exc:\n            info = classify(exc)\n            if info is None and info.retryable:\n                # Not a quota wall \u2014 a transient limit, a 503, a bad schema.\n                # Let the retry policy deal with it on the good model.\n                raise\n            log.warning(\n                \"%s: %s \u2014 falling back to the spare model. Findings from this \"\n                \"point come from a different model and are not comparable.\",\n                self.label, info.describe(),\n            )\n            record(self.label)\n            return self.fallback.invoke(input, config, **kwargs)\n",
+        "hunks": [
+          {
+            "content": "@@ -59,1 +59,1 @@\n-            if info is None or info.retryable:\n+            if info is None and info.retryable:",
+            "new_lines": 1,
+            "new_start": 59,
+            "old_lines": 1,
+            "old_start": 59
+          }
+        ],
+        "is_binary": false,
+        "old_path": null,
+        "path": "src/loupe/fallback.py"
+      }
+    ],
+    "head_sha": null,
+    "pr_number": null,
+    "ref": "defect/invert_bool_operator/src/loupe/fallback.py",
+    "repo": null,
+    "repo_root": "/Users/bsreedharamurthy/Desktop/loupe",
+    "source": "local",
+    "title": "eval case: src/loupe/fallback.py"
+  },
+  "schema": 1,
+  "truth": {
+    "after": "if info is None and info.retryable:",
+    "before": "if info is None or info.retryable:",
+    "category": "correctness",
+    "description": "`or` changed to `and` in a condition, inverting when the branch runs.",
+    "line": 59,
+    "name": "invert_bool_operator"
+  }
+}

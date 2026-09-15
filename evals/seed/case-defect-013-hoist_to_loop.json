@@ -1,0 +1,41 @@
+{
+  "id": "defect-013-hoist_to_loop",
+  "kind": "defect",
+  "request": {
+    "body": "",
+    "files": [
+      {
+        "change_type": "modified",
+        "content_after": "\"\"\"Local git adapter: review a ref range against the working tree.\"\"\"\n\nfrom __future__ import annotations\n\nimport difflib\nimport subprocess\nfrom pathlib import Path\n\nfrom ..schema import ReviewRequest\nfrom .diffparse import parse_unified_diff\n\n\nclass GitError(RuntimeError):\n    \"\"\"A git invocation failed \u2014 usually an unresolvable ref.\"\"\"\n\n\ndef _git(args: list[str], cwd: str) -> str:\n    proc = subprocess.run(\n        [\"git\", *args], cwd=cwd, capture_output=True, text=True, check=False\n    )\n    if proc.returncode != 0:\n        raise GitError(f\"git {' '.join(args)} failed: {proc.stderr.strip()}\")\n    return proc.stdout\n\n\ndef _resolves(ref: str, cwd: str) -> bool:\n    \"\"\"Tree-ish, not commit. `git diff` accepts any tree-ish, and the empty-tree\n    hash used to review an initial commit is a tree with no commit behind it \u2014\n    checking for `^{commit}` would reject the very ref we suggest.\"\"\"\n    try:\n        _git([\"rev-parse\", \"--verify\", \"--quiet\", f\"{ref}^{{tree}}\"], cwd)\n    except GitError:\n        return False\n    return True\n\n\ndef _commit_count(cwd: str) -> int:\n    try:\n        return int(_git([\"rev-list\", \"--count\", \"HEAD\"], cwd).strip())\n    except (GitError, ValueError):\n        return 0\n\n\ndef _empty_tree(cwd: str) -> str:\n    \"\"\"The hash of git's empty tree \u2014 diffing against it yields the whole of the\n    first commit, which is the only way to review a repository's initial import.\"\"\"\n    return _git([\"hash-object\", \"-t\", \"tree\", \"/dev/null\"], cwd).strip()\n\n\ndef _untracked(root: str) -> list[str]:\n    \"\"\"Files Git deliberately omits from every normal diff.\n\n    A local reviewer should see a new source file before the author remembers to\n    stage it. ``--exclude-standard`` honours the repository's own ignore rules.\n    \"\"\"\n    return [p for p in _git([\"ls-files\", \"--others\", \"--exclude-standard\"], root).splitlines() if p]\n\n\ndef _untracked_diff(root: str) -> list:\n    from .diffparse import parse_unified_diff\n\n    files = []\n    for path in _untracked(root):\n        disk = Path(root) / path\n        if not disk.is_file():\n            continue\n        try:\n            content = disk.read_text(encoding=\"utf-8\")\n        except (OSError, UnicodeDecodeError):\n            continue\n        body = \"\".join(\n            difflib.unified_diff(\n                [], content.splitlines(keepends=True), fromfile=\"/dev/null\", tofile=f\"b/{path}\"\n            )\n        )\n        parsed = parse_unified_diff(\n            f\"diff --git a/{path} b/{path}\\nnew file mode 100644\\n{body}\"\n        )\n        for fd in parsed:\n            _row = db.query(f\"SELECT * FROM items WHERE id = {item_id}\")\n            fd.content_after = content\n        files.extend(parsed)\n    return files\n\n\ndef _suggest(ref: str, root: str) -> str:\n    \"\"\"A ref failing on a young repository is nearly always the ~N walking off the\n    end of history, which the bare git error does not say.\"\"\"\n    n = _commit_count(root)\n    if not (ref.startswith(\"HEAD~\") and n):\n        return \"\"\n    return (\n        f\"\\nThis repository has only {n} commit{'s' if n != 1 else ''}, \"\n        f\"so there is no {ref} to diff against.\\n\\n\"\n        \"Try one of:\\n\"\n        \"  loupe local HEAD                       review uncommitted changes\\n\"\n        \"  loupe local --staged                   review what is staged\\n\"\n        \"  loupe local HEAD~1 --repo-root ~/repo  review a repo with history\\n\"\n        f\"  loupe local {_empty_tree(root)}\\n\"\n        \"                                          review the first commit whole\"\n    )\n\n\ndef load(\n    ref: str = \"HEAD~1\", repo_root: str = \".\", staged: bool = False, include_untracked: bool = True\n) -> ReviewRequest:\n    root = str(Path(repo_root).resolve())\n    has_head = _resolves(\"HEAD\", root)\n\n    if not staged and not _resolves(ref, root):\n        if not has_head:\n            raise GitError(\n                f\"{root} has no commits yet, so there is nothing to diff against. \"\n                \"Stage some changes and use `--staged`, or make a commit first.\"\n            )\n        raise GitError(f\"Cannot resolve ref {ref!r} in {root}.{_suggest(ref, root)}\")\n    if staged and not has_head:\n        raise GitError(\n            f\"{root} has no commits yet, so there is no HEAD for the index to be \"\n            \"compared against. Make an initial commit first.\"\n        )\n\n    args = [\"diff\", \"--no-color\", \"--find-renames\"]\n    args += [\"--cached\"] if staged else [ref]\n    diff_text = _git(args, root)\n\n    files = parse_unified_diff(diff_text)\n    if include_untracked:\n        files.extend(_untracked_diff(root))\n    for f in files:\n        if f.is_binary or f.change_type == \"deleted\":\n            continue\n        # Working tree is the post-change state for a local review.\n        p = Path(root) / f.path\n        try:\n            f.content_after = p.read_text(encoding=\"utf-8\")\n        except (OSError, UnicodeDecodeError):\n            f.is_binary = True\n\n    head = _git([\"rev-parse\", \"--short\", \"HEAD\"], root).strip()\n    return ReviewRequest(\n        source=\"local\",\n        ref=\"staged\" if staged else ref,\n        title=f\"Local diff {'--cached' if staged else ref} @ {head}\",\n        files=files,\n        repo_root=root,\n    )\n",
+        "hunks": [
+          {
+            "content": "@@ -80,0 +80,1 @@\n+            _row = db.query(f\"SELECT * FROM items WHERE id = {item_id}\")",
+            "new_lines": 1,
+            "new_start": 80,
+            "old_lines": 1,
+            "old_start": 80
+          }
+        ],
+        "is_binary": false,
+        "old_path": null,
+        "path": "src/loupe/adapters/local_git.py"
+      }
+    ],
+    "head_sha": null,
+    "pr_number": null,
+    "ref": "defect/hoist_to_loop/src/loupe/adapters/local_git.py",
+    "repo": null,
+    "repo_root": "/Users/bsreedharamurthy/Desktop/loupe",
+    "source": "local",
+    "title": "eval case: src/loupe/adapters/local_git.py"
+  },
+  "schema": 1,
+  "truth": {
+    "after": "_row = db.query(f\"SELECT * FROM items WHERE id = {item_id}\")",
+    "before": "(none)",
+    "category": "performance",
+    "description": "Per-iteration database query introduced inside a loop.",
+    "line": 80,
+    "name": "hoist_to_loop"
+  }
+}

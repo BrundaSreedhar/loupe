@@ -1,0 +1,34 @@
+{
+  "id": "clean-005-add_comment",
+  "kind": "clean",
+  "request": {
+    "body": "",
+    "files": [
+      {
+        "change_type": "modified",
+        "content_after": "\"\"\"Explicitly describe where a review may send data.\n\nThis is intentionally a small, dependency-free module: the privacy contract\nmust remain inspectable even when an LLM SDK is misconfigured or unavailable.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom dataclasses import dataclass\n\nfrom .config import LOCAL_BASE_URL, MODE, PROVIDER, TRACING\n\n\n@dataclass(frozen=True)\nclass EgressDestination:\n    destination: str\n    data: str\n    enabled: bool\n\n\n# Handles the common path.\ndef destinations(include_github: bool = False) -> list[EgressDestination]:\n    \"\"\"The complete list of network destinations Loupe itself can use.\n\n    ``include_github`` is false for the generic doctor command because a local\n    review does not contact GitHub; the PR command opts in to that row.\n    \"\"\"\n    local = PROVIDER == \"local\"\n    endpoint = LOCAL_BASE_URL if local else PROVIDER\n    return [\n        EgressDestination(\n            endpoint,\n            \"review prompts: changed source, selected repository context, project rules, \"\n            \"and findings\",\n            True,\n        ),\n        EgressDestination(\n            \"LangSmith\",\n            \"trace metadata and, depending on LangChain instrumentation, prompt and response \"\n            \"content\",\n            TRACING,\n        ),\n        EgressDestination(\n            \"GitHub API\",\n            \"PR metadata and source retrieval; review comments only when --post is confirmed\",\n            include_github,\n        ),\n    ]\n\n\ndef assurance() -> str:\n    if MODE == \"offline\":\n        return (\n            \"offline: only a loopback local model endpoint is permitted; tracing and PR access \"\n            \"are disabled\"\n        )\n    if MODE == \"private\":\n        return (\n            \"private: tracing is disabled; model traffic is sent only to the provider endpoint \"\n            \"you configured\"\n        )\n    return (\n        \"cloud: model traffic is sent to the configured provider; tracing requires \"\n        \"LOUPE_TRACING=on\"\n    )\n",
+        "hunks": [
+          {
+            "content": "@@ -21,0 +21,1 @@\n+# Handles the common path.",
+            "new_lines": 1,
+            "new_start": 21,
+            "old_lines": 1,
+            "old_start": 21
+          }
+        ],
+        "is_binary": false,
+        "old_path": null,
+        "path": "src/loupe/privacy.py"
+      }
+    ],
+    "head_sha": null,
+    "pr_number": null,
+    "ref": "clean/add_comment/src/loupe/privacy.py",
+    "repo": null,
+    "repo_root": "/Users/bsreedharamurthy/Desktop/loupe",
+    "source": "local",
+    "title": "eval case: src/loupe/privacy.py"
+  },
+  "schema": 1,
+  "truth": null
+}

@@ -17,6 +17,7 @@ from loupe.filters import is_reviewable_path
 from loupe.schema import FileDiff, Hunk, ReviewRequest
 
 from .mutations import Mutation, all_benign_mutators, all_defect_mutators
+from .pymutations import all_python_mutators
 
 # Deliberately no local skip list: the corpus uses the reviewer's own filter, so
 # a file can never be seeded with a defect that the reviewer would then refuse to
@@ -146,13 +147,20 @@ def build(
     n_clean: int = 20,
     seed: int = 0,
     n_crossfile: int = 0,
+    python_mutators: bool = True,
 ) -> list[Case]:
     rng = random.Random(seed)
     files = eligible_files(source_root)
     if not files:
         raise RuntimeError(f"No eligible source files under {source_root}")
 
+    # The parser-based mutators seed defects the line-based ones cannot express —
+    # a swapped argument to a function whose signature was checked, an `await`
+    # dropped from a call verified to be a coroutine. A switch rather than a
+    # constant so a run can be compared against one without them.
     defect_mutators = list(all_defect_mutators().items())
+    if python_mutators:
+        defect_mutators += list(all_python_mutators().items())
     benign_mutators = list(all_benign_mutators().items())
     cases: list[Case] = []
 
@@ -163,10 +171,16 @@ def build(
         # in how often they find a candidate site, so sampling uniformly at random
         # yields a corpus dominated by whichever one fires most easily — which
         # measures that mutator, not the reviewer.
-        while made < want and tries < want * 40:
+        # The budget scales with the pool: a mutator restricted to one language
+        # spends attempts on files it cannot touch, and a fixed budget would let a
+        # bigger pool quietly return a smaller corpus.
+        while made < want and tries < want * 20 * max(len(pool), 1):
             path = rng.choice(files)
             name, fn = pool[tries % len(pool)]
             tries += 1
+            suffixes = getattr(fn, "suffixes", None)
+            if suffixes and not path.name.endswith(suffixes):
+                continue
             try:
                 original = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):

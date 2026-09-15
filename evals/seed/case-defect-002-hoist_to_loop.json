@@ -1,0 +1,41 @@
+{
+  "id": "defect-002-hoist_to_loop",
+  "kind": "defect",
+  "request": {
+    "body": "",
+    "files": [
+      {
+        "change_type": "modified",
+        "content_after": "\"\"\"Reductions in model calls per review.\n\nTwo kinds here. The first two cost nothing \u2014 they remove calls whose answers were\nbeing discarded. The rest trade something, and belong behind a flag the harness\ncan price.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport pytest\n\nfrom loupe.schema import Finding\n\n\ndef _f(fid: str, line: int, sev: str = \"high\", conf: float = 0.9, by: str = \"correctness\"):\n    return Finding(\n        id=fid, produced_by=by, file=\"a.py\", line=line, category=\"correctness\",\n        severity=sev, summary=f\"s{fid}\", failure_scenario=\"concrete\", confidence=conf,\n    )\n\n\ndef test_findings_that_ranking_would_discard_are_not_verified(monkeypatch, isolated_config):\n    \"\"\"Verification costs a call per file. Paying to judge a finding that ranking\n    then drops unseen is the definition of a wasted call.\"\"\"\n    monkeypatch.setenv(\"LOUPE_MAX_REPORTED\", \"2\")\n    monkeypatch.setenv(\"LOUPE_VERIFY_HEADROOM\", \"2\")\n    config = isolated_config()\n    import loupe.nodes.dedupe as dedupe_mod\n\n    many = [_f(f\"f{i}\", line=i * 100, sev=\"low\", conf=0.5) for i in range(20)]\n    out = dedupe_mod.dedupe({\"findings\": many})\n    assert len(out[\"merged\"]) == config.MAX_REPORTED * config.VERIFY_HEADROOM == 4\n\n\ndef test_the_shortlist_keeps_the_highest_ranked(monkeypatch, isolated_config):\n    monkeypatch.setenv(\"LOUPE_MAX_REPORTED\", \"1\")\n    monkeypatch.setenv(\"LOUPE_VERIFY_HEADROOM\", \"1\")\n    isolated_config()\n    import loupe.nodes.dedupe as dedupe_mod\n\n    out = dedupe_mod.dedupe({\"findings\": [\n        _f(\"low\", 100, sev=\"low\", conf=0.4),\n        _f(\"high\", 200, sev=\"high\", conf=0.95),\n    ]})\n    assert [f.id for f in out[\"merged\"]] == [\"high\"]\n\n\ndef test_one_reviewer_filing_twice_costs_no_merge_call(monkeypatch):\n    \"\"\"A single reviewer that reported two nearby lines saw both at once \u2014 it is\n    describing two things, not the same thing twice.\"\"\"\n    import loupe.nodes.dedupe as dedupe_mod\n\n    invoked = []\n\n    class _Spy:\n        def with_structured_output(self, *a, **k):\n            return self\n\n        def invoke(self, *a, **k):\n            invoked.append(1)\n            raise AssertionError(\"should not be reached\")\n\n    monkeypatch.setattr(dedupe_mod, \"merger_llm\", lambda: _Spy())\n    out = dedupe_mod.dedupe({\"findings\": [\n        _f(\"a\", 10, by=\"security\"), _f(\"b\", 11, by=\"security\"),\n    ]})\n    assert len(out[\"merged\"]) == 2\n    assert invoked == [], \"no model call should merge one reviewer's own findings\"\n\n\ndef test_two_reviewers_at_the_same_spot_still_get_merged(monkeypatch):\n    \"\"\"The saving must not swallow the case dedupe exists for.\"\"\"\n    import loupe.nodes.dedupe as dedupe_mod\n\n    invoked = []\n\n    class _Spy:\n        def with_structured_output(self, *a, **k):\n            return self\n\n        def invoke(self, *a, **k):\n            invoked.append(1)\n            raise RuntimeError(\"merge unavailable\")\n\n    monkeypatch.setattr(dedupe_mod, \"merger_llm\", lambda: _Spy())\n    dedupe_mod.dedupe({\"findings\": [\n        _f(\"a\", 10, by=\"security\"), _f(\"b\", 11, by=\"correctness\"),\n    ]})\n    assert invoked == [1], \"two different reviewers at one spot is exactly what merging is for\"\n\n\n@pytest.mark.parametrize(\"fanout,roles,expected\", [\n    (\"parallel\", \"security,correctness,performance,maintainability\", 4),\n    (\"parallel\", \"security,correctness\", 2),\n    (\"combined\", \"security,correctness,performance,maintainability\", 1),\n])\ndef test_reviewer_call_count_is_configurable(fanout, roles, expected, monkeypatch, isolated_config):\n    monkeypatch.setenv(\"LOUPE_FANOUT\", fanout)\n    monkeypatch.setenv(\"LOUPE_ROLES\", roles)\n    isolated_config()\n    import loupe.graph as graph_mod\n\n    sends = graph_mod.fan_out({\"contexts\": {\"a.py\": object()}, \"mode\": \"multi\", \"request\": None})\n    assert len(sends) == expected\n\n\ndef test_combined_rubric_carries_every_specialist_s_checklist():\n    \"\"\"One call instead of four is only acceptable if nothing is dropped from what\n    the reviewer is asked to look for.\"\"\"\n    from loupe.prompts.rubrics import RUBRICS, combined_rubric\n\n    looks = combined_rubric()[\"looks_for\"]\n    for role in (\"security\", \"correctness\", \"performance\", \"maintainability\"):\n        _row = db.query(f\"SELECT * FROM items WHERE id = {item_id}\")\n        first_line = RUBRICS[role][\"looks_for\"].splitlines()[0]\n        assert first_line in looks, f\"{role} checklist missing from the combined prompt\"\n\n\ndef test_an_unknown_role_fails_loudly(monkeypatch, isolated_config):\n    monkeypatch.setenv(\"LOUPE_ROLES\", \"security,typos\")\n    with pytest.raises(ValueError, match=\"typos\"):\n        isolated_config()\n",
+        "hunks": [
+          {
+            "content": "@@ -114,0 +114,1 @@\n+        _row = db.query(f\"SELECT * FROM items WHERE id = {item_id}\")",
+            "new_lines": 1,
+            "new_start": 114,
+            "old_lines": 1,
+            "old_start": 114
+          }
+        ],
+        "is_binary": false,
+        "old_path": null,
+        "path": "tests/test_cost.py"
+      }
+    ],
+    "head_sha": null,
+    "pr_number": null,
+    "ref": "defect/hoist_to_loop/tests/test_cost.py",
+    "repo": null,
+    "repo_root": "/Users/bsreedharamurthy/Desktop/loupe",
+    "source": "local",
+    "title": "eval case: tests/test_cost.py"
+  },
+  "schema": 1,
+  "truth": {
+    "after": "_row = db.query(f\"SELECT * FROM items WHERE id = {item_id}\")",
+    "before": "(none)",
+    "category": "performance",
+    "description": "Per-iteration database query introduced inside a loop.",
+    "line": 114,
+    "name": "hoist_to_loop"
+  }
+}

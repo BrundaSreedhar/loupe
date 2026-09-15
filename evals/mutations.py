@@ -125,7 +125,12 @@ def remove_guard(lines: list[str], rng: random.Random) -> Mutation | None:
     return Mutation(
         name="remove_guard",
         category="correctness",
-        line=max(idx, 1),
+        # `idx + 1`, not `idx`: idx is 0-based, and after deleting the guard and its
+        # body the following code shifts up to 1-based line idx+1 — which is where
+        # the diff reports the change. Reporting `idx` put the ground truth one line
+        # above the hunk, which only ever scored correctly because ANCHOR_TOLERANCE
+        # is 3 and quietly absorbed it.
+        line=min(idx + 1, len(lines)) or 1,
         before=before.strip(),
         after="(guard deleted)",
         description="Null/empty guard and its early return removed.",

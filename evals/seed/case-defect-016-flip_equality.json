@@ -1,0 +1,41 @@
+{
+  "id": "defect-016-flip_equality",
+  "kind": "defect",
+  "request": {
+    "body": "",
+    "files": [
+      {
+        "change_type": "modified",
+        "content_after": "\"\"\"Merge findings that describe the same defect.\n\nRuns before verification on purpose: verification is one model call per finding,\nso every duplicate removed here is a call not made. Positional grouping is done\nfirst, deterministically and for free, so the model is only asked about findings\nthat are actually near each other.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport logging\nfrom collections import defaultdict\n\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nfrom ..config import (\n    GROUNDING_WINDOW,\n    MAX_REPORTED,\n    MERGE_LINE_WINDOW,\n    VERIFY_HEADROOM,\n    merger_llm,\n    structured,\n)\nfrom ..fingerprint import compute as fingerprint\nfrom ..grounding import check as check_citation\nfrom ..prompts.merge import SYSTEM, user_prompt\nfrom ..quota import raise_if_terminal\nfrom ..schema import Finding, MergedFinding, MergeResult, Problem, validate_fix\nfrom ..state import ReviewState\nfrom .finalize import rank_key\n\nlog = logging.getLogger(__name__)\n\n\ndef group_by_locality(findings: list[Finding]) -> list[list[Finding]]:\n    by_file: dict[str, list[Finding]] = defaultdict(list)\n    for f in findings:\n        by_file[f.file].append(f)\n\n    groups: list[list[Finding]] = []\n    for _, fs in sorted(by_file.items()):\n        fs.sort(key=lambda x: x.line)\n        current = [fs[0]]\n        for f in fs[1:]:\n            if f.line - current[-1].line <= MERGE_LINE_WINDOW:\n                current.append(f)\n            else:\n                groups.append(current)\n                current = [f]\n        groups.append(current)\n    return groups\n\n\ndef rejoin(merged: MergedFinding, covered: list[Finding], source: str) -> Finding:\n    \"\"\"Turn a merge result back into a finding, carrying over what the merger has\n    no way to produce.\n\n    The merger reads summaries, not source, so it cannot cite a line and is not\n    asked to: the merged finding inherits the citation of the finding it kept. If\n    the merger moved the line away from that quote, the quote wins \u2014 it is the\n    half of the pair that was checked against the file.\n    \"\"\"\n    payload = merged.model_dump(exclude={\"covers\"})\n    evidence = covered[0].evidence\n    if evidence and source:\n        cite = check_citation(evidence, source, payload[\"line\"], GROUNDING_WINDOW)\n        payload[\"line\"] = cite.line if cite.ok else covered[0].line\n    finding = Finding(\n        id=covered[0].id,\n        produced_by=covered[0].produced_by,\n        merged_from=[c.id for c in covered],\n        evidence=evidence,\n        # Recomputed, never inherited: the fingerprint is taken over the code\n        # around the line, and a merge can move the line. Inheriting one from\n        # before the move points memory at the wrong piece of code.\n        fingerprint=(\n            fingerprint(payload[\"file\"], payload[\"category\"], source, payload[\"line\"])\n            if source\n            else \"\"\n        ),\n        **payload,\n    )\n    # Re-checked here rather than trusted from the merger: the line may have moved\n    # to meet the quote, and a patch whose range no longer contains the finding is\n    # an apply button that edits the wrong place.\n    return validate_fix(finding, source)\n\n\ndef dedupe(state: ReviewState) -> dict:\n    findings = state.get(\"findings\") or []\n    if not findings:\n        return {\"merged\": []}\n\n    request = state.get(\"request\")\n    sources = (\n        {f.path: f.content_after for f in request.files if f.content_after is not None}\n        if request is not None\n        else {}\n    )\n\n    llm = structured(merger_llm(), MergeResult, \"dedupe\")\n    merged: list[Finding] = []\n    problems: list[Problem] = []\n\n    for group in group_by_locality(findings):\n        if len(group) == 1:\n            merged.append(group[0])\n            continue\n        if len({f.produced_by for f in group}) != 1:\n            # One reviewer filing twice near the same line is reporting two things,\n            # not the same thing twice \u2014 it saw both at once. Nothing to merge.\n            merged.extend(group)\n            continue\n        try:\n            result: MergeResult = llm.invoke(\n                [SystemMessage(SYSTEM), HumanMessage(user_prompt(group))],\n                config={\n                    \"run_name\": f\"merge:{group[0].file}:{group[0].line}\",\n                    \"tags\": [\"dedupe\"],\n                    \"metadata\": {\"group_size\": len(group)},\n                },\n            )\n        except Exception as exc:  # noqa: BLE001 \u2014 a failed merge must not lose\n            # findings; keep them all, unmerged. A quota failure still propagates.\n            raise_if_terminal(exc)\n            log.warning(\"merge failed at %s:%d (%s); keeping %d finding(s) unmerged\",\n                        group[0].file, group[0].line, type(exc).__name__, len(group))\n            problems.append(Problem(\n                stage=\"dedupe\",\n                detail=f\"could not merge {len(group)} finding(s) at {group[0].file}:\"\n                       f\"{group[0].line} \u2014 they may appear as duplicates\",\n            ))\n            merged.extend(group)\n            continue\n\n        for m in result.findings:\n            covered = [group[i] for i in m.covers if 0 <= i < len(group)] or group\n            merged.append(rejoin(m, covered, sources.get(m.file, \"\")))\n\n    # Rank and shortlist here rather than in finalize. Verification costs a call\n    # per file, and a finding that ranking will discard anyway is a call spent on\n    # an answer nobody sees. Some headroom over MAX_REPORTED, because the gate\n    # will reject a share of these and the survivors have to fill the report.\n    merged.sort(key=rank_key, reverse=True)\n    shortlist = merged[: MAX_REPORTED * VERIFY_HEADROOM]\n    if len(shortlist) < len(merged):\n        log.info(\"dedupe: %d finding(s) -> %d merged -> %d worth verifying\",\n                 len(findings), len(merged), len(shortlist))\n    else:\n        log.info(\"dedupe: %d finding(s) -> %d\", len(findings), len(merged))\n    return {\"merged\": shortlist, \"problems\": problems}\n",
+        "hunks": [
+          {
+            "content": "@@ -109,1 +109,1 @@\n-        if len({f.produced_by for f in group}) == 1:\n+        if len({f.produced_by for f in group}) != 1:",
+            "new_lines": 1,
+            "new_start": 109,
+            "old_lines": 1,
+            "old_start": 109
+          }
+        ],
+        "is_binary": false,
+        "old_path": null,
+        "path": "src/loupe/nodes/dedupe.py"
+      }
+    ],
+    "head_sha": null,
+    "pr_number": null,
+    "ref": "defect/flip_equality/src/loupe/nodes/dedupe.py",
+    "repo": null,
+    "repo_root": "/Users/bsreedharamurthy/Desktop/loupe",
+    "source": "local",
+    "title": "eval case: src/loupe/nodes/dedupe.py"
+  },
+  "schema": 1,
+  "truth": {
+    "after": "if len({f.produced_by for f in group}) != 1:",
+    "before": "if len({f.produced_by for f in group}) == 1:",
+    "category": "correctness",
+    "description": "Equality comparison inverted.",
+    "line": 109,
+    "name": "flip_equality"
+  }
+}

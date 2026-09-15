@@ -197,6 +197,45 @@ reviewers will send — references included. Warming without them warms nothing.
 the corpus uses the reviewer's own path filter: two implementations of "where is
 this defined" drift, and then the harness measures the drift.
 
+**`evals/seed` is frozen on purpose, and re-freezing resets every comparison.**
+The generated corpus is a function of a source repo and a seed, so it moves whenever
+that repo does — which means a number from last month cannot be compared with one
+from today. `--seed-set` scores the committed cases instead. `freeze-set` regenerates
+them, and a result against the old set and one against the new set are two different
+measurements wearing the same name, so do it rarely and say so when you do.
+
+Freeze from a repo whose source you are willing to publish. The cases embed the real
+file they were cut from, and this repository has a GitHub remote.
+
+**Two detection columns, and they mean different things.** `detection_rate` asks
+only whether something was flagged within three lines of the seeded defect.
+`strict_detection_rate` also requires the finding's category to match the
+mutation's. Both are reported because the gap between them is how much of the
+headline number is coincidence — a style reviewer objecting to a name on the same
+line scores in the first column and not the second. `detection_rate` keeps its old
+meaning deliberately: every recorded result was measured on it, and redefining a
+column silently makes past runs incomparable.
+
+**Parser-based mutators live in `evals/pymutations.py`, and their contract is
+enforced by the decorator, not by each mutator.** `mutations.py` is line-based so one
+corpus builder covers Python, TypeScript and JavaScript; `pymutations.py` gives that
+up for the defects a regex cannot express — a swapped argument to a callee whose
+signature was checked, an `await` dropped from a call verified to be a coroutine.
+`_adapt` enforces three things: the result parses, it differs from the original, and
+the reported line is the line that changed. That last one is the number the whole
+harness rests on, and nothing downstream can tell a wrong ground-truth line from a
+reviewer that missed the defect. The first version of that guard read
+`ast.parse(mutated) is None`, which never fires — `ast.parse` raises — so the rule
+was documented and not enforced. There is a test for it now.
+
+**Do not seed a defect a linter would catch.** `ruff` runs before the reviewers and
+they are told not to re-report what it found, so a mutator planting a B006 mutable
+default or a bare `except` measures the pre-pass rather than the panel. Two drafted
+mutators were dropped for this: `mutable_default_argument` (ruff B006) and
+`widen_slice_bound`, which mostly produced non-defects — widening `skipped[:4]` in a
+log message is cosmetic, and an unfair permanent miss drags detection down while
+looking like the reviewer's fault.
+
 **Evals turn the lint pre-pass off, on purpose.** The mutated file exists only in
 memory. A linter reads the file on disk, which is the unmutated one, and reports
 on code the reviewer was never shown. `run_review(..., lint=False)` is the switch.

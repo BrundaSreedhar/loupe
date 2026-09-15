@@ -1,0 +1,41 @@
+{
+  "id": "defect-007-swap_operands",
+  "kind": "defect",
+  "request": {
+    "body": "",
+    "files": [
+      {
+        "change_type": "modified",
+        "content_after": "import random\n\nimport pytest\n\nfrom evals.corpus import build_request\nfrom evals.mutations import all_benign_mutators, all_defect_mutators\n\nSAMPLE = '''\\\nasync def handler(request, db):\n    if not request.user_id:\n        return None\n    total = low - high\n    for i in range(len(items)):\n        process(items[i])\n    rows = await db.fetch(\"SELECT * FROM users WHERE id = %s\", request.user_id)\n    if rows == []:\n        return None\n    try:\n        return rows[0]\n    except KeyError as exc:\n        raise exc\n'''\n\n\n@pytest.mark.parametrize(\"name\", sorted(all_defect_mutators()))\ndef test_defect_mutator_changes_source_and_records_its_line(name):\n    fn = all_defect_mutators()[name]\n    lines = SAMPLE.splitlines()\n    mutation = fn(lines, random.Random(0))\n    if mutation is None:\n        pytest.skip(f\"{name} found no candidate site in the sample\")\n    assert \"\\n\".join(lines) != SAMPLE\n    assert 1 <= mutation.line <= len(lines)\n\n\n@pytest.mark.parametrize(\"name\", sorted(all_benign_mutators()))\ndef test_benign_mutator_reports_no_defect_category(name):\n    fn = all_benign_mutators()[name]\n    lines = SAMPLE.splitlines()\n    mutation = fn(lines, random.Random(0))\n    if mutation is None:\n        pytest.skip(f\"{name} found no candidate site in the sample\")\n    assert mutation.category == \"none\"\n\n\ndef test_synthesised_diff_anchors_the_mutated_line():\n    \"\"\"The ground-truth line must actually appear as changed in the diff the\n    reviewer is shown, or recall is being measured against a line nobody saw.\"\"\"\n    lines = SAMPLE.splitlines()\n    mutation = all_defect_mutators()[\"flip_equality\"](lines, random.Random(0))\n    assert mutation is not None\n    mutated = \"\\n\".join(lines)\n    request = build_request(\"sample.py\", SAMPLE, mutated, \"test\")\n    assert mutation.line in request.files[0].changed_lines\n",
+        "hunks": [
+          {
+            "content": "@@ -12,1 +12,1 @@\n-    total = high - low\n+    total = low - high",
+            "new_lines": 1,
+            "new_start": 12,
+            "old_lines": 1,
+            "old_start": 12
+          }
+        ],
+        "is_binary": false,
+        "old_path": null,
+        "path": "tests/test_mutations.py"
+      }
+    ],
+    "head_sha": null,
+    "pr_number": null,
+    "ref": "defect/swap_operands/tests/test_mutations.py",
+    "repo": null,
+    "repo_root": "/Users/bsreedharamurthy/Desktop/loupe",
+    "source": "local",
+    "title": "eval case: tests/test_mutations.py"
+  },
+  "schema": 1,
+  "truth": {
+    "after": "total = low - high",
+    "before": "total = high - low",
+    "category": "correctness",
+    "description": "Operands of a subtraction swapped, negating the result.",
+    "line": 12,
+    "name": "swap_operands"
+  }
+}

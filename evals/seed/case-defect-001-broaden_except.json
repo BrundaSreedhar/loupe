@@ -1,0 +1,41 @@
+{
+  "id": "defect-001-broaden_except",
+  "kind": "defect",
+  "request": {
+    "body": "",
+    "files": [
+      {
+        "change_type": "modified",
+        "content_after": "\"\"\"Remembering what was already reported.\n\nA reviewer that repeats the same four comments after every push gets muted by\nThursday. Once findings have a stable identity across runs, the review can report\nwhat changed instead of reprinting the list.\n\nState lives outside the repository. Writing it into the working tree would put a\nmachine-generated file into the diff \u2014 which the reviewer would then be asked to\nreview.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport hashlib\nimport json\nimport logging\nimport os\nimport time\nfrom dataclasses import dataclass\nfrom pathlib import Path\n\nfrom .schema import Finding\n\nlog = logging.getLogger(__name__)\n\nSCHEMA = 1\n\n\ndef state_dir() -> Path:\n    base = Path(os.getenv(\"XDG_CONFIG_HOME\", Path.home() / \".config\"))\n    return Path(os.getenv(\"LOUPE_STATE_DIR\", base / \"loupe\" / \"state\"))\n\n\ndef _slug(repo: str, branch: str) -> str:\n    \"\"\"One file per repository and branch. Hashed because a repo identity can be a\n    filesystem path, a URL, or an owner/name pair.\"\"\"\n    digest = hashlib.sha256(f\"{repo}\\x00{branch}\".encode()).hexdigest()[:16]\n    tail = \"\".join(c if c.isalnum() else \"-\" for c in Path(repo).name)[:32]\n    return f\"{tail}-{branch.replace('/', '-')[:24]}-{digest}.json\"\n\n\n@dataclass\nclass Delta:\n    \"\"\"What changed since the last review of this branch.\"\"\"\n\n    new: list[Finding]\n    persisting: list[Finding]\n    resolved: list[str]        # fingerprints, the findings themselves are gone\n    first_run: bool\n\n    @property\n    def worth_reporting(self) -> list[Finding]:\n        return self.new\n\n\ndef path_for(repo: str, branch: str) -> Path:\n    return state_dir() / _slug(repo, branch)\n\n\ndef load(repo: str, branch: str) -> dict[str, dict]:\n    p = path_for(repo, branch)\n    if not p.is_file():\n        return {}\n    try:\n        blob = json.loads(p.read_text())\n    except (OSError, json.JSONDecodeError) as exc:\n        log.warning(\"could not read review memory at %s (%s); treating as empty\", p, exc)\n        return {}\n    if blob.get(\"schema\") != SCHEMA:\n        log.info(\"review memory at %s is an older format; starting fresh\", p)\n        return {}\n    return blob.get(\"findings\") or {}\n\n\ndef save(repo: str, branch: str, findings: list[Finding]) -> None:\n    p = path_for(repo, branch)\n    try:\n        p.parent.mkdir(parents=True, exist_ok=True)\n        p.write_text(json.dumps({\n            \"schema\": SCHEMA,\n            \"repo\": repo,\n            \"branch\": branch,\n            \"updated\": time.time(),\n            \"findings\": {\n                f.fingerprint: {\n                    \"file\": f.file,\n                    \"line\": f.line,\n                    \"category\": f.category,\n                    \"severity\": f.severity,\n                    \"summary\": f.summary,\n                }\n                for f in findings\n                if f.fingerprint\n            },\n        }, indent=2))\n    except Exception as exc:\n        # Losing memory costs a repeated comment next time, not a wrong review.\n        log.warning(\"could not write review memory to %s: %s\", p, exc)\n\n\ndef diff(previous: dict[str, dict], current: list[Finding], first_run: bool) -> Delta:\n    seen = {f.fingerprint for f in current if f.fingerprint}\n    return Delta(\n        new=[f for f in current if f.fingerprint and f.fingerprint not in previous],\n        persisting=[f for f in current if f.fingerprint and f.fingerprint in previous],\n        resolved=[fp for fp in previous if fp not in seen],\n        first_run=first_run,\n    )\n",
+        "hunks": [
+          {
+            "content": "@@ -96,1 +96,1 @@\n-    except OSError as exc:\n+    except Exception as exc:",
+            "new_lines": 1,
+            "new_start": 96,
+            "old_lines": 1,
+            "old_start": 96
+          }
+        ],
+        "is_binary": false,
+        "old_path": null,
+        "path": "src/loupe/memory.py"
+      }
+    ],
+    "head_sha": null,
+    "pr_number": null,
+    "ref": "defect/broaden_except/src/loupe/memory.py",
+    "repo": null,
+    "repo_root": "/Users/bsreedharamurthy/Desktop/loupe",
+    "source": "local",
+    "title": "eval case: src/loupe/memory.py"
+  },
+  "schema": 1,
+  "truth": {
+    "after": "except Exception as exc:",
+    "before": "except OSError as exc:",
+    "category": "correctness",
+    "description": "Narrow except widened to bare Exception, swallowing unrelated failures.",
+    "line": 96,
+    "name": "broaden_except"
+  }
+}

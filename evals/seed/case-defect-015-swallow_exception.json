@@ -1,0 +1,41 @@
+{
+  "id": "defect-015-swallow_exception",
+  "kind": "defect",
+  "request": {
+    "body": "",
+    "files": [
+      {
+        "change_type": "modified",
+        "content_after": "\"\"\"Single entry point for running a review. The CLI and the eval harness both\ngo through here, so the thing being measured is the thing that ships.\"\"\"\n\nfrom __future__ import annotations\n\nfrom typing import Literal\n\nfrom .fallback import reset_usage, usage\nfrom .graph import build_graph\nfrom .progress import callbacks as progress_callbacks\nfrom .progress import reporter\nfrom .quota import raise_if_terminal\nfrom .schema import Finding, Problem, ReviewRequest, ReviewResult, TokenUsage, Verdict\nfrom .tokens import Meter, collect\n\n_GRAPH = None\n\n\ndef _graph():\n    global _GRAPH\n    if _GRAPH is None:\n        _GRAPH = build_graph()\n    return _GRAPH\n\n\ndef run_review(\n    request: ReviewRequest,\n    mode: Literal[\"single\", \"multi\"] = \"multi\",\n    verify: bool = True,\n    run_name: str | None = None,\n    remember: bool = True,\n    lint: bool | None = None,\n    progress=None,\n) -> ReviewResult:\n    reset_usage()\n    # Passed in the config rather than used as a context manager: the reviewers\n    # run in parallel threads, and a callback on the config is propagated to every\n    # branch by LangGraph, where a context variable's propagation is not something\n    # to rely on across a thread pool.\n    meter = Meter()\n    # A spinner still turning over a traceback is its own bug, so the watcher is\n    # closed whatever happens \u2014 including on the quota abort below.\n    watcher = reporter(progress)\n    try:\n        final = _invoke(request, mode, verify, run_name, remember, lint, meter, watcher)\n    except Exception as exc:  # noqa: BLE001 \u2014 re-raised immediately; this only\n        # decides which exception the caller sees.\n        # A daily cap has to arrive as DailyQuotaExhausted whichever node hit it.\n        # The nodes with broad excepts already translate it, but a reviewer branch\n        # has none \u2014 it has no failure to swallow \u2014 so an exhausted quota came out\n        # as the provider's own error, the eval harness read it as one bad case,\n        # and ground through the rest of the corpus failing identically.\n        raise_if_terminal(exc)\n    finally:\n        if watcher is not None:\n            watcher.close()\n    return _assemble(request, mode, verify, final, collect(meter))\n\n\ndef _invoke(request, mode, verify, run_name, remember, lint, meter, watcher=None):\n    return _graph().invoke(\n        {\n            \"request\": request,\n            \"mode\": mode,\n            \"verify\": verify,\n            \"remember\": remember,\n            \"lint\": lint,\n            \"findings\": [],\n            \"verdicts\": [],\n            \"consensus\": [],\n            \"problems\": [],\n        },\n        config={\n            \"run_name\": run_name or f\"review:{request.ref}\",\n            \"tags\": [mode, \"verified\" if verify else \"unverified\"],\n            \"metadata\": {\n                \"mode\": mode,\n                \"verify\": verify,\n                \"remember\": remember,\n                \"lint\": lint,\n                \"source\": request.source,\n                \"ref\": request.ref,\n                \"files\": len(request.reviewable),\n            },\n            # N findings fan out in one superstep; the default limit is per-step,\n            # but deep verify fan-outs on large diffs still want headroom.\n            \"recursion_limit\": 100,\n            # Every model call in the run reports its usage here, retries and\n            # fallbacks included.\n            \"callbacks\": [meter, *progress_callbacks(watcher)],\n        },\n    )\n\ndef _assemble(\n    request: ReviewRequest,\n    mode: str,\n    verify: bool,\n    final: dict,\n    tokens: TokenUsage | None = None,\n) -> ReviewResult:\n    raw: list[Finding] = final.get(\"findings\") or []\n    merged: list[Finding] = final.get(\"merged\") or []\n    verdicts: list[Verdict] = final.get(\"verdicts\") or []\n    accepted: list[Finding] = final.get(\"accepted\") or []\n    delta = final.get(\"delta\")\n    edges = list(final.get(\"edges\") or [])\n    summaries = dict(final.get(\"summaries\") or {})\n    problems: list[Problem] = list(final.get(\"problems\") or [])\n    fell_back = usage()\n    if fell_back:\n        problems.append(Problem(\n            stage=\"fallback\",\n            detail=f\"{len(fell_back)} stage(s) ran on the local model after the \"\n                   f\"daily quota ran out ({', '.join(sorted(fell_back))}). These \"\n                   \"findings come from a smaller model and are not comparable \"\n                   \"with a normal run.\",\n            severity=\"error\",\n        ))\n\n    confirmed = sum(1 for v in verdicts if v.status == \"CONFIRMED\")\n    return ReviewResult(\n        tokens=tokens or TokenUsage(),\n        request_ref=request.ref,\n        mode=mode,\n        verified=verify,\n        raw=raw,\n        merged=merged,\n        accepted=accepted,\n        verdicts=verdicts,\n        problems=problems,\n        delta=delta,\n        edges=edges,\n        summaries=summaries,\n        usage={\n            \"raw_count\": len(raw),\n            \"merged_count\": len(merged),\n            \"accepted_count\": len(accepted),\n            \"merge_rate\": 1 - (len(merged) / len(raw)) if raw else 0.0,\n            \"rejection_rate\": 1 - (confirmed / len(verdicts)) if verdicts else 0.0,\n            \"dropped_files\": len(final.get(\"dropped\") or []),\n            # How many files the reviewers were actually shown. Zero means the\n            # review never happened, which must not be reported as \"found nothing\".\n            \"contexts\": len(final.get(\"contexts\") or {}),\n            \"fallback_stages\": len(fell_back),\n            # Definitions pulled in from elsewhere in the repository. Zero means\n            # the reviewers saw the diff and nothing else.\n            \"references\": len(final.get(\"references\") or []),\n            \"reconsidered\": len(final.get(\"consensus\") or []),\n        },\n    )\n",
+        "hunks": [
+          {
+            "content": "@@ -54,1 +54,0 @@\n-        raise",
+            "new_lines": 1,
+            "new_start": 54,
+            "old_lines": 1,
+            "old_start": 54
+          }
+        ],
+        "is_binary": false,
+        "old_path": null,
+        "path": "src/loupe/runner.py"
+      }
+    ],
+    "head_sha": null,
+    "pr_number": null,
+    "ref": "defect/swallow_exception/src/loupe/runner.py",
+    "repo": null,
+    "repo_root": "/Users/bsreedharamurthy/Desktop/loupe",
+    "source": "local",
+    "title": "eval case: src/loupe/runner.py"
+  },
+  "schema": 1,
+  "truth": {
+    "after": "(re-raise deleted)",
+    "before": "raise",
+    "category": "correctness",
+    "description": "A re-raise was removed from an except block. The exception is now swallowed and the caller is told the operation succeeded.",
+    "line": 54,
+    "name": "swallow_exception"
+  }
+}

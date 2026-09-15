@@ -1,0 +1,21 @@
+{
+  "frozen_at": "2026-09-15T05:15:49.374215+00:00",
+  "mutators": {
+    "broaden_except": 1,
+    "clean": 10,
+    "drop_await": 2,
+    "drop_call_argument": 2,
+    "flip_equality": 4,
+    "hoist_to_loop": 4,
+    "invert_bool_operator": 2,
+    "off_by_one": 1,
+    "remove_guard": 2,
+    "swallow_exception": 1,
+    "swap_operands": 1
+  },
+  "n_clean": 10,
+  "n_defect": 20,
+  "schema": 1,
+  "source": "/Users/bsreedharamurthy/Desktop/loupe",
+  "source_commit": "6222738"
+}

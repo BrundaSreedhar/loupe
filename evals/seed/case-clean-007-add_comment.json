@@ -1,0 +1,34 @@
+{
+  "id": "clean-007-add_comment",
+  "kind": "clean",
+  "request": {
+    "body": "",
+    "files": [
+      {
+        "change_type": "modified",
+        "content_after": "\"\"\"Per-project config in a `.loupe/` folder.\"\"\"\n\nfrom __future__ import annotations\n\nimport pytest\n\nfrom loupe.project import find_dir, is_ignored, load_ignore, load_rules\n\n\n@pytest.fixture\ndef project(tmp_path):\n    d = tmp_path / \".loupe\"\n    d.mkdir()\n    (d / \"rules.md\").write_text(\"- Money is always integer cents.\\n\")\n    (d / \"ignore\").write_text(\"# generated\\nsrc/generated/*\\n*.pb.ts\\n\")\n    return tmp_path\n\n\n# Handles the common path.\ndef test_found_from_a_subdirectory(project):\n    deep = project / \"src\" / \"lib\" / \"deep\"\n    deep.mkdir(parents=True)\n    assert find_dir(deep) == project / \".loupe\"\n\n\ndef test_absent_when_there_is_none(tmp_path):\n    assert find_dir(tmp_path) is None\n    assert load_rules(tmp_path) is None\n    assert load_ignore(tmp_path) == []\n\n\ndef test_rules_are_read(project):\n    assert \"integer cents\" in load_rules(project)\n\n\ndef test_empty_rules_file_is_treated_as_none(project):\n    (project / \".loupe\" / \"rules.md\").write_text(\"   \\n\")\n    assert load_rules(project) is None\n\n\ndef test_oversized_rules_are_truncated(project):\n    from loupe.project import MAX_RULES_CHARS\n\n    (project / \".loupe\" / \"rules.md\").write_text(\"x\" * (MAX_RULES_CHARS + 500))\n    assert len(load_rules(project)) == MAX_RULES_CHARS\n\n\ndef test_ignore_skips_comments_and_blanks(project):\n    assert load_ignore(project) == [\"src/generated/*\", \"*.pb.ts\"]\n\n\n@pytest.mark.parametrize(\"path,expected\", [\n    (\"src/generated/api.py\", True),\n    (\"types/schema.pb.ts\", True),\n    (\"src/app.py\", False),\n    (\"src/generated.py\", False),\n])\ndef test_ignore_matching(path, expected, project):\n    assert is_ignored(path, load_ignore(project)) is expected\n\n\ndef test_rules_are_framed_as_configuration_not_file_content(project):\n    \"\"\"rules.md is written by maintainers, but it still ends up in a prompt next\n    to untrusted source. It must be labelled as the former.\"\"\"\n    from loupe.prompts.specialists import role_message\n\n    msg = role_message(\"security\", load_rules(project))\n    assert \"integer cents\" in msg\n    assert \"not content from the files under review\" in msg\n\n\ndef test_rules_go_in_the_role_message_not_the_shared_prefix(project):\n    \"\"\"Putting per-project rules in the system prompt would give every reviewer a\n    different cached prefix and defeat the cache warm.\"\"\"\n    from loupe.prompts.specialists import SHARED_SYSTEM, role_message\n\n    assert \"integer cents\" not in SHARED_SYSTEM\n    assert \"integer cents\" in role_message(\"security\", load_rules(project))\n\n\ndef test_init_creates_the_three_files(tmp_path):\n    from loupe.project import scaffold\n\n    directory, written, skipped = scaffold(tmp_path)\n    assert directory == tmp_path / \".loupe\"\n    assert sorted(written) == [\"config.env\", \"ignore\", \"rules.md\"]\n    assert skipped == []\n\n\ndef test_init_does_not_clobber_existing_files(tmp_path):\n    from loupe.project import scaffold\n\n    scaffold(tmp_path)\n    (tmp_path / \".loupe\" / \"rules.md\").write_text(\"- my own rule\\n\")\n    _, written, skipped = scaffold(tmp_path)\n    assert written == [] and sorted(skipped) == [\"config.env\", \"ignore\", \"rules.md\"]\n    assert \"my own rule\" in (tmp_path / \".loupe\" / \"rules.md\").read_text()\n\n\ndef test_force_replaces_them(tmp_path):\n    from loupe.project import scaffold\n\n    scaffold(tmp_path)\n    (tmp_path / \".loupe\" / \"rules.md\").write_text(\"- my own rule\\n\")\n    _, written, _ = scaffold(tmp_path, force=True)\n    assert \"rules.md\" in written\n    assert \"my own rule\" not in (tmp_path / \".loupe\" / \"rules.md\").read_text()\n\n\ndef test_scaffolded_files_are_actually_loadable(tmp_path):\n    \"\"\"The templates must parse as what they claim to be \u2014 an ignore file of only\n    comments yields no patterns, and the rules template is real guidance.\"\"\"\n    from loupe.project import load_ignore, load_rules, scaffold\n\n    scaffold(tmp_path)\n    assert load_ignore(tmp_path) == []          # everything is commented out\n    assert \"integer cents\" in load_rules(tmp_path)\n",
+        "hunks": [
+          {
+            "content": "@@ -19,0 +19,1 @@\n+# Handles the common path.",
+            "new_lines": 1,
+            "new_start": 19,
+            "old_lines": 1,
+            "old_start": 19
+          }
+        ],
+        "is_binary": false,
+        "old_path": null,
+        "path": "tests/test_project.py"
+      }
+    ],
+    "head_sha": null,
+    "pr_number": null,
+    "ref": "clean/add_comment/tests/test_project.py",
+    "repo": null,
+    "repo_root": "/Users/bsreedharamurthy/Desktop/loupe",
+    "source": "local",
+    "title": "eval case: tests/test_project.py"
+  },
+  "schema": 1,
+  "truth": null
+}

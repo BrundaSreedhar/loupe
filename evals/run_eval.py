@@ -26,6 +26,9 @@ from loupe.schema import ReviewRequest
 
 from .corpus import Case, build
 from .scoring import Report, score_case, spread
+from .seedset import describe, freeze, load, needs_source_repo
+
+SEED_SET = Path("evals/seed")
 
 app = typer.Typer(add_completion=False)
 console = Console()
@@ -134,6 +137,10 @@ def render_comparison(results: dict[str, list[Report]]) -> None:
     table = Table(title="Arm comparison", title_style="bold", header_style="dim")
     table.add_column("arm")
     table.add_column("detection", justify="right")
+    # The same catches, counted again but only when filed under the right
+    # category. A wide gap means the headline column is being carried by
+    # coincidence — something was flagged near the line for the wrong reason.
+    table.add_column("right reason", justify="right")
     table.add_column("FP / clean diff", justify="right")
     table.add_column("silent on clean", justify="right")
     table.add_column("gate rejected", justify="right")
@@ -146,6 +153,7 @@ def render_comparison(results: dict[str, list[Report]]) -> None:
 
     for arm, reps in results.items():
         det_m, det_s = spread([r.detection_rate for r in reps])
+        strict_m, _ = spread([r.strict_detection_rate for r in reps])
         fp_m, fp_s = spread([r.fp_per_clean for r in reps])
         sil_m, _ = spread([r.clean_silence_rate for r in reps])
         rej_m, _ = spread([r.rejection_rate for r in reps])
@@ -158,6 +166,7 @@ def render_comparison(results: dict[str, list[Report]]) -> None:
         table.add_row(
             arm,
             f"{det_m:.0%}" + (f" ±{det_s:.0%}" if pm else ""),
+            f"{strict_m:.0%}",
             f"{fp_m:.2f}" + (f" ±{fp_s:.2f}" if pm else ""),
             f"{sil_m:.0%}",
             f"{rej_m:.0%}" if "verify" in arm else "—",
@@ -173,7 +182,10 @@ def render_comparison(results: dict[str, list[Report]]) -> None:
 
 @app.command()
 def main(
-    source: Path = typer.Option(..., "--source", help="Repo to draw corpus source from."),
+    source: Path = typer.Option(
+        Path("."), "--source",
+        help="Repo to draw corpus source from. Ignored with --seed-set.",
+    ),
     arms: str = typer.Option("multi+verify", "--arms", help="Comma-separated, or 'all'."),
     n_defect: int = typer.Option(20, "--n-defect"),
     n_clean: int = typer.Option(20, "--n-clean"),
@@ -181,6 +193,16 @@ def main(
         0, "--n-crossfile",
         help="Defects visible only from another file — the measurement for "
              "repository expansion. Python callers only.",
+    ),
+    seed_set: bool = typer.Option(
+        False, "--seed-set",
+        help="Score the frozen corpus in evals/seed instead of generating one. The "
+             "only way two runs weeks apart are comparable.",
+    ),
+    py_mutators: bool = typer.Option(
+        True, "--py-mutators/--no-py-mutators",
+        help="Include the parser-based Python defect mutators. Off for comparison "
+             "against a run seeded only by the line-based ones.",
     ),
     repeats: int = typer.Option(1, "--repeats", help="Repeat runs to measure the noise floor."),
     workers: int = typer.Option(4, "--workers"),
@@ -193,35 +215,58 @@ def main(
     if unknown:
         raise typer.BadParameter(f"Unknown arm(s): {unknown}. Choose from {list(ARMS)}.")
 
-    cases = build(
-        source.expanduser().resolve(),
-        n_defect=n_defect,
-        n_clean=n_clean,
-        seed=seed,
-        n_crossfile=n_crossfile,
-    )
+    if seed_set:
+        cases, manifest = load(SEED_SET)
+        origin = manifest.get("source", "?")
+        commit = manifest.get("source_commit") or "unknown commit"
+        console.print(
+            f"[dim]Frozen seed set: {len(cases)} case(s) from {SEED_SET}, cut from "
+            f"{origin} @ {commit} on {manifest.get('frozen_at', '?')[:10]}[/dim]"
+        )
+        absent = needs_source_repo(cases) if not Path(origin).is_dir() else []
+        if absent:
+            # These carry the calling file but not the callee's, so without the
+            # source checkout they score the reviewer with its context removed —
+            # which is indistinguishable from a reviewer that missed them.
+            console.print(
+                f"[yellow]{len(absent)} cross-file case(s) need {origin} on disk "
+                "and it is not there.[/yellow] They will be scored without "
+                "repository context, which understates detection. Drop them or "
+                "restore the checkout."
+            )
+    else:
+        cases = build(
+            source.expanduser().resolve(),
+            n_defect=n_defect,
+            n_clean=n_clean,
+            seed=seed,
+            n_crossfile=n_crossfile,
+            python_mutators=py_mutators,
+        )
     n_d = sum(1 for c in cases if c.kind == "defect")
     n_c = len(cases) - n_d
     n_x = sum(1 for c in cases if c.id.startswith("defect-x"))
-    console.print(
-        f"[dim]Corpus: {n_d} seeded defects ({n_x} cross-file), {n_c} clean "
-        f"controls, from {source}[/dim]"
-    )
+    if not seed_set:
+        console.print(
+            f"[dim]Corpus: {n_d} seeded defects ({n_x} cross-file), {n_c} clean "
+            f"controls, from {source}[/dim]"
+        )
     # Both switches change what is being measured, and neither is visible in the
     # table below. A result file that does not say which run it was is a result
     # nobody can compare against anything.
     console.print(
         f"[dim]Citations {'on' if GROUNDING else 'off'} · repository expansion "
-        f"{INDEX} · lint pre-pass off (the corpus is in memory)[/dim]"
+        f"{INDEX} · parser-based mutators {'on' if py_mutators else 'off'} · "
+        f"lint pre-pass off (the corpus is in memory)[/dim]"
     )
 
-    if n_d - n_x < n_defect or n_c < n_clean:
+    if not seed_set and (n_d - n_x < n_defect or n_c < n_clean):
         console.print(
             f"[yellow]Note:[/yellow] asked for {n_defect}/{n_clean}, got "
             f"{n_d - n_x}/{n_c} — mutators found fewer candidate sites than "
             "requested in this source tree."
         )
-    if n_x < n_crossfile:
+    if not seed_set and n_x < n_crossfile:
         console.print(
             f"[yellow]Note:[/yellow] asked for {n_crossfile} cross-file case(s), "
             f"got {n_x}. They need a Python call whose function is defined in "
@@ -284,6 +329,8 @@ def main(
                 "n_clean": n_c,
                 "grounding": GROUNDING,
                 "index": INDEX,
+                "python_mutators": py_mutators,
+                "seed_set": str(SEED_SET) if seed_set else None,
                 "model": MODEL,
                 "provider": PROVIDER,
                 "arms": {
@@ -298,6 +345,51 @@ def main(
         )
     )
     console.print(f"[dim]Written to {path}[/dim]")
+
+
+@app.command()
+def freeze_set(
+    source: Path = typer.Option(..., "--source", help="Repo to cut the cases from."),
+    n_defect: int = typer.Option(20, "--n-defect"),
+    n_clean: int = typer.Option(10, "--n-clean"),
+    n_crossfile: int = typer.Option(0, "--n-crossfile"),
+    seed: int = typer.Option(0, "--seed"),
+    out: Path = typer.Option(SEED_SET, "--out"),
+) -> None:
+    """Generate a corpus once and write it out to be committed.
+
+    Run this rarely. The whole point is that the cases stop moving, so re-freezing
+    resets every comparison you have — a result against the old set and one against
+    the new set are two different measurements wearing the same name.
+    """
+    root = source.expanduser().resolve()
+    cases = build(root, n_defect=n_defect, n_clean=n_clean, seed=seed, n_crossfile=n_crossfile)
+    written = freeze(cases, out, root)
+
+    dist = describe(cases)
+    n_d = sum(1 for c in cases if c.kind == "defect")
+    console.print(f"[green]Froze {len(written)} case(s)[/green] to {out}")
+    console.print(json.dumps(dist, indent=2))
+
+    # A set where one mutator supplies half the defects measures that mutator.
+    defects = {k: v for k, v in dist.items() if k != "clean"}
+    if defects:
+        worst, count = max(defects.items(), key=lambda kv: kv[1])
+        # `>=`: at 20 defects the threshold is 6, and `>` let exactly 6 through —
+        # which is the lopsided case the check exists to catch.
+        if count >= max(3, n_d // 4):
+            console.print(
+                f"[yellow]{worst} supplies {count} of {n_d} defects.[/yellow] A "
+                "lopsided set measures that one defect shape. Re-freeze with a "
+                "different --seed, or a source repo with more variety."
+            )
+    if n_clean == 0:
+        console.print(
+            "[yellow]No clean controls.[/yellow] Detection without a "
+            "false-positive column is not a measurement — a reviewer that flags "
+            "every line scores 100%."
+        )
+    console.print(f"[dim]Commit {out} so the numbers stay comparable.[/dim]")
 
 
 @app.command()

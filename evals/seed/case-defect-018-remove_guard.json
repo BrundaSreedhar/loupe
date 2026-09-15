@@ -1,0 +1,41 @@
+{
+  "id": "defect-018-remove_guard",
+  "kind": "defect",
+  "request": {
+    "body": "",
+    "files": [
+      {
+        "change_type": "modified",
+        "content_after": "\"\"\"GitHub PR adapter.\n\nUses the REST API directly rather than shelling out to `gh` \u2014 one less thing to\ninstall, and it is the same code path in CI where `gh` often isn't present.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport base64\nimport os\n\nimport httpx\n\nfrom ..schema import ReviewRequest\nfrom .diffparse import parse_unified_diff\n\nAPI = \"https://api.github.com\"\n\n\ndef _headers(token: str, accept: str = \"application/vnd.github+json\") -> dict[str, str]:\n    return {\n        \"Authorization\": f\"Bearer {token}\",\n        \"Accept\": accept,\n        \"X-GitHub-Api-Version\": \"2022-11-28\",\n    }\n\n\ndef load(repo: str, pr_number: int, token: str | None = None) -> ReviewRequest:\n    token = token or os.getenv(\"GITHUB_TOKEN\") or \"\"\n\n    with httpx.Client(timeout=30.0, follow_redirects=True) as client:\n        meta = client.get(f\"{API}/repos/{repo}/pulls/{pr_number}\", headers=_headers(token))\n        meta.raise_for_status()\n        pr = meta.json()\n        head_sha = pr[\"head\"][\"sha\"]\n\n        diff = client.get(\n            f\"{API}/repos/{repo}/pulls/{pr_number}\",\n            headers=_headers(token, \"application/vnd.github.v3.diff\"),\n        )\n        diff.raise_for_status()\n        files = parse_unified_diff(diff.text)\n\n        for f in files:\n            if f.is_binary or f.change_type == \"deleted\":\n                continue\n            resp = client.get(\n                f\"{API}/repos/{repo}/contents/{f.path}\",\n                params={\"ref\": head_sha},\n                headers=_headers(token),\n            )\n            if resp.status_code != 200:\n                f.is_binary = True\n                continue\n            payload = resp.json()\n            if payload.get(\"encoding\") != \"base64\":\n                f.is_binary = True\n                continue\n            try:\n                f.content_after = base64.b64decode(payload[\"content\"]).decode(\"utf-8\")\n            except (ValueError, UnicodeDecodeError):\n                f.is_binary = True\n\n    return ReviewRequest(\n        source=\"github\",\n        ref=head_sha,\n        title=pr.get(\"title\") or \"\",\n        body=pr.get(\"body\") or \"\",\n        files=files,\n        repo=repo,\n        pr_number=pr_number,\n        head_sha=head_sha,\n    )\n",
+        "hunks": [
+          {
+            "content": "@@ -30,2 +30,0 @@\n-    if not token:\n-        raise RuntimeError(\"GITHUB_TOKEN is not set \u2014 the GitHub adapter needs contents:read.\")",
+            "new_lines": 1,
+            "new_start": 30,
+            "old_lines": 2,
+            "old_start": 30
+          }
+        ],
+        "is_binary": false,
+        "old_path": null,
+        "path": "src/loupe/adapters/github_pr.py"
+      }
+    ],
+    "head_sha": null,
+    "pr_number": null,
+    "ref": "defect/remove_guard/src/loupe/adapters/github_pr.py",
+    "repo": null,
+    "repo_root": "/Users/bsreedharamurthy/Desktop/loupe",
+    "source": "local",
+    "title": "eval case: src/loupe/adapters/github_pr.py"
+  },
+  "schema": 1,
+  "truth": {
+    "after": "(guard deleted)",
+    "before": "if not token:",
+    "category": "correctness",
+    "description": "Null/empty guard and its early return removed.",
+    "line": 30,
+    "name": "remove_guard"
+  }
+}

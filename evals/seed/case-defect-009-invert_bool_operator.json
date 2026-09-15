@@ -1,0 +1,41 @@
+{
+  "id": "defect-009-invert_bool_operator",
+  "kind": "defect",
+  "request": {
+    "body": "",
+    "files": [
+      {
+        "change_type": "modified",
+        "content_after": "\"\"\"Shared node helpers.\"\"\"\n\nfrom __future__ import annotations\n\nfrom typing import Any\n\nfrom ..config import PROVIDER\nfrom ..schema import FileContext, Finding\n\n\ndef cached_block(text: str) -> str | list[dict[str, Any]]:\n    \"\"\"Mark the shared prefix as cacheable, in whatever way the provider understands.\n\n    Anthropic needs an explicit `cache_control` breakpoint. Gemini caches matching\n    prefixes implicitly and rejects unknown block keys, so it just gets the text \u2014\n    the prefix-ordering discipline in prompts/specialists.py is what makes the\n    implicit cache hit, and that is provider-independent.\n    \"\"\"\n    if PROVIDER != \"anthropic\":\n        return text\n    return [{\"type\": \"text\", \"text\": text, \"cache_control\": {\"type\": \"ephemeral\"}}]\n\n\ndef valid_lines(ctx: FileContext) -> set[int]:\n    \"\"\"Line numbers actually present in what the reviewer was shown.\"\"\"\n    out: set[int] = set()\n    for row in ctx.content.splitlines():\n        head = row[:1]\n        rest = row[1:].split(\"|\", 1)\n        if head in (\">\", \" \") or rest and rest[0].strip().isdigit():\n            out.add(int(rest[0].strip()))\n    return out\n\n\ndef drop_ungrounded(\n    findings: list[Finding], contexts: dict[str, FileContext]\n) -> tuple[list[Finding], list[str]]:\n    \"\"\"Discard findings pointing at files or lines the reviewer was never shown.\n\n    This is cheap, deterministic noise control that costs no tokens \u2014 a finding on\n    a file outside the change is definitionally a hallucination, and one on a line\n    that isn't in the context can't be anchored for an inline comment anyway.\"\"\"\n    kept: list[Finding] = []\n    reasons: list[str] = []\n    for f in findings:\n        ctx = contexts.get(f.file)\n        if ctx is None:\n            reasons.append(f\"{f.file}:{f.line} \u2014 file not in the reviewed change\")\n            continue\n        if f.line not in valid_lines(ctx):\n            reasons.append(f\"{f.file}:{f.line} \u2014 line not present in the given context\")\n            continue\n        kept.append(f)\n    return kept, reasons\n",
+        "hunks": [
+          {
+            "content": "@@ -30,1 +30,1 @@\n-        if head in (\">\", \" \") and rest and rest[0].strip().isdigit():\n+        if head in (\">\", \" \") or rest and rest[0].strip().isdigit():",
+            "new_lines": 1,
+            "new_start": 30,
+            "old_lines": 1,
+            "old_start": 30
+          }
+        ],
+        "is_binary": false,
+        "old_path": null,
+        "path": "src/loupe/nodes/_common.py"
+      }
+    ],
+    "head_sha": null,
+    "pr_number": null,
+    "ref": "defect/invert_bool_operator/src/loupe/nodes/_common.py",
+    "repo": null,
+    "repo_root": "/Users/bsreedharamurthy/Desktop/loupe",
+    "source": "local",
+    "title": "eval case: src/loupe/nodes/_common.py"
+  },
+  "schema": 1,
+  "truth": {
+    "after": "if head in (\">\", \" \") or rest and rest[0].strip().isdigit():",
+    "before": "if head in (\">\", \" \") and rest and rest[0].strip().isdigit():",
+    "category": "correctness",
+    "description": "`and` changed to `or` in a condition, inverting when the branch runs.",
+    "line": 30,
+    "name": "invert_bool_operator"
+  }
+}

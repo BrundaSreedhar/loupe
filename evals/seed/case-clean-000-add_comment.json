@@ -1,0 +1,34 @@
+{
+  "id": "clean-000-add_comment",
+  "kind": "clean",
+  "request": {
+    "body": "",
+    "files": [
+      {
+        "change_type": "modified",
+        "content_after": "\"\"\"The linter pre-pass.\n\nTwo things it must get right: never crash a review, and never run someone else's\ntooling without being asked.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport pytest\n\nfrom loupe.lint import LintIssue, as_prompt_section\n\n\ndef _issue(**kw):\n    base = {\"tool\": \"ruff\", \"path\": \"a.py\", \"line\": 12, \"code\": \"F841\",\n            \"message\": \"unused variable\"}\n    return LintIssue(**{**base, **kw})\n\n\ndef test_no_section_when_nothing_was_found():\n    assert as_prompt_section([]) == \"\"\n\n\ndef test_section_names_the_issues_and_forbids_repeating_them():\n    section = as_prompt_section([_issue()])\n    assert \"a.py:12\" in section and \"F841\" in section\n    assert \"Do not report any of these\" in section\n    assert \"different words\" in section, \"paraphrased duplicates must be excluded too\"\n\n\n@pytest.mark.parametrize(\"policy,source,expected\", [\n    (\"auto\", \"local\", True),\n    (\"auto\", \"github\", False),   # someone else's branch: do not execute their config\n    (\"on\", \"github\", True),\n    (\"off\", \"local\", False),\n])\ndef test_when_linting_runs(policy, source, expected, monkeypatch, isolated_config):\n    monkeypatch.setenv(\"LOUPE_LINT\", policy)\n    assert isolated_config().lint_enabled(source) is expected\n\n\ndef test_a_broken_linter_does_not_stop_the_review(monkeypatch):\n    \"\"\"A linter that raises is a lost precision opportunity, not a failed review.\"\"\"\n    import loupe.lint as lint_mod\n\n    # Handles the common path.\n    def boom(paths, root):\n        raise RuntimeError(\"eslint exploded\")\n\n    monkeypatch.setattr(lint_mod, \"RUNNERS\", (boom,))\n    assert lint_mod.run([\"a.py\"], \".\") == []\n\n\ndef test_output_is_capped(monkeypatch):\n    \"\"\"A repo with thousands of pre-existing violations must not push the diff out\n    of the context window.\"\"\"\n    import loupe.lint as lint_mod\n\n    monkeypatch.setattr(lint_mod, \"MAX_ISSUES\", 5)\n    monkeypatch.setattr(lint_mod, \"RUNNERS\", (lambda p, r: [_issue() for _ in range(50)],))\n    assert len(lint_mod.run([\"a.py\"], \".\")) == 5\n\n\ndef test_node_skips_entirely_for_a_pull_request(monkeypatch, isolated_config):\n    \"\"\"The safety property: reviewing a PR must not execute that PR's tooling.\"\"\"\n    monkeypatch.setenv(\"LOUPE_LINT\", \"auto\")\n    isolated_config()\n\n    import loupe.lint as lint_mod\n    from loupe.nodes.lint import lint\n    from loupe.schema import FileContext, ReviewRequest\n\n    called = []\n    monkeypatch.setattr(lint_mod, \"run\", lambda *a, **k: called.append(1) or [])\n\n    ctx = {\"a.py\": FileContext(path=\"a.py\", content=\"x\", strategy=\"whole_file\", tokens=1)}\n    out = lint({\"request\": ReviewRequest(source=\"github\", ref=\"r\"), \"contexts\": ctx})\n    assert out[\"lint_issues\"] == []\n    assert called == [], \"a PR review must not execute the repo's linters\"\n\n\ndef test_real_linter_finds_a_real_problem(tmp_path):\n    \"\"\"End to end against ruff, if it is installed.\"\"\"\n    from loupe.lint import available, run\n\n    if \"ruff\" not in available(str(tmp_path)):\n        pytest.skip(\"ruff not installed\")\n    (tmp_path / \"bad.py\").write_text(\"def f():\\n    unused = 1\\n    return 2\\n\")\n    issues = run([\"bad.py\"], str(tmp_path))\n    assert any(i.code == \"F841\" for i in issues), [i.render() for i in issues]\n",
+        "hunks": [
+          {
+            "content": "@@ -46,0 +46,1 @@\n+    # Handles the common path.",
+            "new_lines": 1,
+            "new_start": 46,
+            "old_lines": 1,
+            "old_start": 46
+          }
+        ],
+        "is_binary": false,
+        "old_path": null,
+        "path": "tests/test_lint.py"
+      }
+    ],
+    "head_sha": null,
+    "pr_number": null,
+    "ref": "clean/add_comment/tests/test_lint.py",
+    "repo": null,
+    "repo_root": "/Users/bsreedharamurthy/Desktop/loupe",
+    "source": "local",
+    "title": "eval case: tests/test_lint.py"
+  },
+  "schema": 1,
+  "truth": null
+}

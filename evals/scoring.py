@@ -27,6 +27,12 @@ class CaseScore:
     merged: int
     accepted: int
     rejection_rate: float
+    # Flagged the right line *and* filed it under the category the mutation
+    # actually belongs to. Separate from `detected` rather than replacing it, and
+    # defaulted rather than required: every recorded result was measured on the
+    # looser rule, so changing what that column means would make past runs
+    # incomparable, and every existing caller keeps working.
+    detected_category: bool | None = None
     contexts: int = 0
     fallback_stages: int = 0
     mutator: str = ""
@@ -50,6 +56,18 @@ class Report:
     def detection_rate(self) -> float:
         d = self._d()
         return sum(1 for s in d if s.detected) / len(d) if d else 0.0
+
+    @property
+    def strict_detection_rate(self) -> float:
+        """Detection that also got the reason right.
+
+        `detection_rate` asks only whether something was flagged near the seeded
+        line, so a style reviewer objecting to a variable name three lines away
+        scores as a catch. The gap between the two columns is how much of the
+        headline number is luck.
+        """
+        d = self._d()
+        return sum(1 for s in d if s.detected_category) / len(d) if d else 0.0
 
     @property
     def fp_per_clean(self) -> float:
@@ -126,6 +144,7 @@ class Report:
     def as_dict(self) -> dict[str, float]:
         return {
             "detection_rate": self.detection_rate,
+            "strict_detection_rate": self.strict_detection_rate,
             "fp_per_clean": self.fp_per_clean,
             "clean_silence_rate": self.clean_silence_rate,
             "merge_rate": self.merge_rate,
@@ -147,12 +166,18 @@ def score_case(case: Case, result: ReviewResult) -> CaseScore:
     detected: bool | None = None
     fp = 0
 
+    detected_category: bool | None = None
+
     if case.kind == "defect" and case.truth is not None:
         target = case.truth.line
-        detected = any(
-            f.file == case.request.files[0].path and abs(f.line - target) <= ANCHOR_TOLERANCE
+        path = case.request.files[0].path
+        on_target = [
+            f
             for f in accepted
-        )
+            if f.file == path and abs(f.line - target) <= ANCHOR_TOLERANCE
+        ]
+        detected = bool(on_target)
+        detected_category = any(f.category == case.truth.category for f in on_target)
         # Findings elsewhere in a defect case are not scored: the file genuinely
         # may contain other real problems we never labelled.
     else:
@@ -162,6 +187,7 @@ def score_case(case: Case, result: ReviewResult) -> CaseScore:
         case_id=case.id,
         kind=case.kind,
         detected=detected,
+        detected_category=detected_category,
         false_positives=fp,
         raw=int(result.usage.get("raw_count", 0)),
         merged=int(result.usage.get("merged_count", 0)),
