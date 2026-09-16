@@ -234,12 +234,20 @@ def test_a_finding_quoting_code_that_is_not_there_is_dropped(monkeypatch, reques
             ]
         )
 
+    def no_merge_expected(messages, config):
+        raise AssertionError("one surviving finding has nothing to merge with")
+
     spec = _FakeLLM(payload)
+    import loupe.nodes.dedupe as dedupe_mod
     import loupe.nodes.prepare as prepare_mod
     import loupe.nodes.specialists as spec_mod
 
     monkeypatch.setattr(spec_mod, "specialist_llm", lambda: spec)
     monkeypatch.setattr(prepare_mod, "specialist_llm", lambda: spec)
+    # This test does not take the `wired` fixture, so it has to fake the merger
+    # itself. dedupe builds one before it knows whether anything needs merging,
+    # which without this reaches real client construction and needs a key.
+    monkeypatch.setattr(dedupe_mod, "merger_llm", lambda: _FakeLLM(no_merge_expected))
 
     result = run_review(request_fixture, mode="single", verify=False)
 

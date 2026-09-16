@@ -19,8 +19,16 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from loupe.config import GROUNDING, INDEX, MODEL, PROVIDER, RPM
-from loupe.quota import DailyQuotaExhausted
+from loupe.config import (
+    GROUNDING,
+    INDEX,
+    MODEL,
+    PROVIDER,
+    RPM,
+    MissingCredential,
+    require_credentials,
+)
+from loupe.quota import AuthenticationFailed, DailyQuotaExhausted
 from loupe.runner import run_review
 from loupe.schema import ReviewRequest
 
@@ -78,9 +86,17 @@ def run_arm(cases: list[Case], mode: str, verify: bool, workers: int) -> Report:
             case = futures[fut]
             try:
                 result = fut.result()
-            except DailyQuotaExhausted as exc:
+            except (DailyQuotaExhausted, AuthenticationFailed) as exc:
+                # Two different walls, one correct response. A rejected key is
+                # not discoverable before the first call the way a missing one
+                # is, so it arrives here — and like an exhausted quota it is true
+                # for every case still queued.
+                label = (
+                    "Out of quota" if isinstance(exc, DailyQuotaExhausted)
+                    else "Credential rejected"
+                )
                 console.print(
-                    f"[red]Out of quota:[/red] {exc}\n"
+                    f"[red]{label}:[/red] {exc}\n"
                     "Stopping. The remaining cases would fail identically, and "
                     "grinding through them turns a 2-minute failure into 20."
                 )
@@ -282,6 +298,21 @@ def main(
             by_mutator[key] = by_mutator.get(key, 0) + 1
         console.print(json.dumps(by_mutator, indent=2))
         return
+
+    # After the dry run, which builds a corpus and makes no calls, and before the
+    # estimate below promises a number this run cannot produce. Checked once here
+    # rather than left to the first review: without it a missing key is found
+    # separately by every case, and the run ends having measured nothing while
+    # looking like a reviewer that found nothing.
+    try:
+        require_credentials()
+    except MissingCredential as exc:
+        console.print(f"[red]{exc}[/red]")
+        console.print(
+            f"[dim]Nothing was run. {len(selected) * repeats * len(cases)} review(s) "
+            "skipped.[/dim]"
+        )
+        raise typer.Exit(1) from exc
 
     total = len(selected) * repeats * len(cases)
     calls = estimate_calls(selected, len(cases), repeats)

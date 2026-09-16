@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from .config import require_credentials
 from .fallback import reset_usage, usage
 from .graph import build_graph
 from .progress import callbacks as progress_callbacks
@@ -32,6 +33,11 @@ def run_review(
     lint: bool | None = None,
     progress=None,
 ) -> ReviewResult:
+    # Before anything else, and before the graph is built. Every caller that is
+    # not the CLI — the eval harness above all — used to discover a missing key
+    # four reviewers deep, once per case, as a provider error that reads like a
+    # model failure rather than a configuration one.
+    require_credentials()
     reset_usage()
     # Passed in the config rather than used as a context manager: the reviewers
     # run in parallel threads, and a callback on the config is propagated to every

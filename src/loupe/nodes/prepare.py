@@ -10,6 +10,7 @@ from langchain_core.runnables import RunnableConfig
 from ..config import WARM_MIN_TOKENS, specialist_llm, with_short_output
 from ..context import build_contexts
 from ..prompts.specialists import SHARED_SYSTEM, context_message
+from ..quota import raise_if_terminal
 from ..schema import Problem
 from ..state import ReviewState
 from ._common import cached_block
@@ -68,6 +69,15 @@ def warm_cache(state: ReviewState, config: RunnableConfig) -> dict:
         )
     except Exception as exc:  # noqa: BLE001 — a failed warm is a cost
         # regression, never a correctness one. Never fail a review over it.
+        #
+        # Unless the warm failed for a reason that is not about the warm. It is the
+        # first call a review makes, so a rejected credential or an exhausted quota
+        # surfaces here first — and "reviewers will run cold" is then a lie: they
+        # are about to fail identically, four times, and the run ends with an empty
+        # review that reads like a clean one. Terminal failures propagate; genuine
+        # warm failures (a timeout, a transient 5xx) still cost money and nothing
+        # else.
+        raise_if_terminal(exc)
         log.warning("cache warm failed (%s); reviewers will run cold", exc)
         return {"problems": [Problem(
             stage="warm_cache",

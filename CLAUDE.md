@@ -153,10 +153,27 @@ Google sends a short `retryDelay` even for a daily cap, so honouring it blindly
 retries all day. `quota.py` tells them apart — use `should_retry` in retry
 policies and let `DailyQuotaExhausted` propagate rather than catching it.
 
-**Broad excepts must let quota errors through.** `verify` rejects findings it
+**Broad excepts must let terminal errors through.** `verify` rejects findings it
 cannot check, which is right for a bad response and wrong for a quota failure —
 that produces a clean-looking review that never happened. Call `raise_if_terminal`
-first.
+first. The same applies to a rejected credential: `warm_cache` is the first call a
+review makes, so a bad key surfaces there, and its handler logged "reviewers will
+run cold" and let four reviewers fail identically. Cold is a cost problem; refused
+is not.
+
+**A missing key and a refused key are different checks.** `require_credentials`
+runs at the entry point in `run_review`, so nothing downstream starts without one —
+that check belongs there and not only in the CLI, which is how the eval harness
+used to fan out thirty times over a key that was never set. Whether a key is
+*accepted* cannot be known without asking, so it arrives as `AuthenticationFailed`
+from whichever node asked first.
+
+**`should_retry` checks the translated exception types before the wording.** Once
+a node catches a raw provider error and re-raises `AuthenticationFailed` or
+`DailyQuotaExhausted`, the provider's own phrasing is gone — and the classifiers
+match on phrasing. Matching only the raw shape meant a node that had correctly
+identified a terminal failure had that verdict discarded and the node run twice
+more.
 
 **The progress display has two halves and they are not interchangeable.**
 Spinners say what is running now and are transient; the printed lines say what

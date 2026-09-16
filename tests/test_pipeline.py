@@ -1,3 +1,5 @@
+import pytest
+
 from loupe.nodes.dedupe import group_by_locality
 from loupe.nodes.finalize import finalize
 from loupe.schema import Finding, Verdict
@@ -190,12 +192,18 @@ def test_github_comment_anchors_to_the_fix_range():
     assert c["start_line"] == 2 and c["line"] == 4 and c["start_side"] == "RIGHT"
 
 
-def test_nothing_to_review_distinguishes_its_two_causes():
+def test_nothing_to_review_distinguishes_its_two_causes(monkeypatch):
     """An empty diff and a diff that was entirely filtered need different fixes,
     so the message has to say which happened."""
     from typer.testing import CliRunner
 
     from loupe.cli import app
+    from loupe.config import key_env_var
+
+    # `_preflight` refuses a run with no credential before the diff is read, so
+    # without a value here this asserts on output it never reaches. Nothing is
+    # spent: both runs stop at "nothing to review", well short of a model call.
+    monkeypatch.setenv(key_env_var(), "placeholder-for-preflight")
 
     runner = CliRunner()
     import subprocess
@@ -222,3 +230,48 @@ def test_nothing_to_review_distinguishes_its_two_causes():
         filtered = runner.invoke(app, ["local", "HEAD~1", "--repo-root", str(root)])
         assert "none are reviewable" in filtered.output
         assert "README.md" in filtered.output
+
+
+def test_a_missing_key_stops_before_any_reviewer_runs(monkeypatch):
+    """The complaint this answers: with no credential the graph was still built
+    and fanned out, so one configuration mistake arrived as four provider errors
+    per review — and across an eval corpus, as thirty of them ending in no
+    measurement. It has to fail at the entry point instead."""
+    import importlib
+
+    import loupe.config as config
+
+    monkeypatch.setenv("LOUPE_PROVIDER", "anthropic")
+    importlib.reload(config)
+    # After the reload, not before: importing config runs load_dotenv(), which
+    # puts any key in .env back into the environment. Deleting first and then
+    # reloading restores exactly what the test is trying to remove.
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+
+    import loupe.runner as runner
+
+    importlib.reload(runner)
+
+    built = []
+    monkeypatch.setattr(runner, "build_graph", lambda *a, **k: built.append(1))
+
+    from loupe.schema import FileDiff, ReviewRequest
+
+    request = ReviewRequest(
+        source="local",
+        ref="HEAD",
+        files=[FileDiff(path="a.py", content_after="x = 1\n")],
+    )
+
+    with pytest.raises(config.MissingCredential) as exc:
+        runner.run_review(request)
+
+    # The graph is never built, so no reviewer is ever asked to make a call.
+    assert built == []
+    # And the message says which variable to set, not just that something failed.
+    assert "ANTHROPIC_API_KEY" in str(exc.value)
+
+    monkeypatch.undo()
+    importlib.reload(config)
+    importlib.reload(runner)

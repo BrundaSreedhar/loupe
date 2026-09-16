@@ -144,3 +144,99 @@ def test_an_ordinary_failure_is_not_dressed_up_as_a_quota_problem(monkeypatch):
     monkeypatch.setattr(runner, "_invoke", blows_up)
     with pytest.raises(ValueError):
         runner.run_review(ReviewRequest(source="local", ref="HEAD"))
+
+
+# ─── a rejected credential ──────────────────────────────────────────────────
+
+
+class _Anthropic401(Exception):
+    """The shape langchain_anthropic raises: a status_code and the body in str()."""
+
+    status_code = 401
+
+    def __str__(self) -> str:
+        return (
+            "Error code: 401 - {'type': 'error', 'error': {'type': "
+            "'authentication_error', 'message': 'API key is invalid.'}, "
+            "'request_id': None}"
+        )
+
+
+def test_a_401_is_terminal_not_retryable():
+    from loupe.quota import AuthenticationFailed, is_auth_error, raise_if_terminal, should_retry
+
+    exc = _Anthropic401()
+    assert is_auth_error(exc)
+    # Retrying a rejected key is strictly waste, exactly like a daily cap.
+    assert should_retry(exc) is False
+    with pytest.raises(AuthenticationFailed):
+        raise_if_terminal(exc)
+
+
+def test_google_phrasings_are_recognised_too():
+    from loupe.quota import is_auth_error
+
+    for text in ("API_KEY_INVALID", "UNAUTHENTICATED", "invalid_api_key"):
+        assert is_auth_error(Exception(text)), text
+
+
+def test_an_ordinary_failure_is_not_an_auth_error():
+    """The guard must not turn a transient 503 into a terminal one — that would
+    abort runs that a retry would have saved."""
+    from loupe.quota import is_auth_error, raise_if_terminal, should_retry
+
+    exc = Exception("Error code: 503 - model overloaded")
+    assert not is_auth_error(exc)
+    assert should_retry(exc) is True
+    raise_if_terminal(exc)  # does not raise
+
+
+def _warm_state():
+    """Enough state to get past warm_cache's own guards: it skips on a single
+    reviewer and on a prefix too small to be worth a round trip."""
+    ctx = type("Ctx", (), {"tokens": 10_000})()
+    return {
+        "contexts": {"a.py": ctx},
+        "references": [],
+        "mode": "multi",
+        "request": None,
+    }
+
+
+def test_a_failed_warm_on_a_bad_key_stops_the_review(monkeypatch):
+    """The complaint this answers: the warm 401'd, the handler logged 'reviewers
+    will run cold', and four reviewers then failed the same way — producing an
+    empty review that reads like a clean one."""
+    from loupe.nodes import prepare
+    from loupe.quota import AuthenticationFailed
+
+    def boom(*a, **k):
+        raise _Anthropic401()
+
+    monkeypatch.setattr(prepare, "specialist_llm", boom)
+
+    with pytest.raises(AuthenticationFailed):
+        prepare.warm_cache(_warm_state(), {})
+
+
+def test_a_warm_that_fails_for_an_ordinary_reason_still_only_warns(monkeypatch):
+    """The original contract has to survive: a timeout costs money, not the run."""
+    from loupe.nodes import prepare
+
+    def boom(*a, **k):
+        raise TimeoutError("took too long")
+
+    monkeypatch.setattr(prepare, "specialist_llm", boom)
+
+    out = prepare.warm_cache(_warm_state(), {})
+    assert out["problems"] and out["problems"][0].stage == "warm_cache"
+
+
+def test_a_translated_terminal_error_is_not_retried():
+    """A node that catches a raw 401 and re-raises AuthenticationFailed has made
+    a decision. The retry policy reads wording, and the wrapper does not carry the
+    provider's — so without a type check it retried the node twice more."""
+    from loupe.quota import AuthenticationFailed, DailyQuotaExhausted, should_retry
+
+    assert should_retry(AuthenticationFailed("the provider rejected the credential")) is False
+    assert should_retry(DailyQuotaExhausted("daily quota exhausted")) is False

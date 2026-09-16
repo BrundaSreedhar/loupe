@@ -14,6 +14,7 @@ from .config import MODE, MODEL, PROVIDER, RPM, TRACING, credentials_present, ke
 from .emit import post_to_github, render, render_json
 from .logs import setup_logging
 from .privacy import assurance, destinations
+from .quota import AuthenticationFailed, DailyQuotaExhausted
 from .runner import run_review
 from .schema import ReviewResult
 
@@ -31,6 +32,20 @@ def _logging_for(output: str, verbose: int) -> None:
     stdout has to hold one parseable document and nothing else.
     """
     setup_logging(verbose, console=console if output == "text" else None)
+
+
+def _run(request, **kwargs):
+    """Run a review, turning a wall into a message instead of a traceback.
+
+    A rejected credential and an exhausted quota are configuration problems, not
+    review results. They reach here because neither can be known before asking:
+    `_preflight` catches the key that is absent, not the key that is refused.
+    """
+    try:
+        return run_review(request, **kwargs)
+    except (AuthenticationFailed, DailyQuotaExhausted) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
 
 
 def _preflight() -> None:
@@ -130,7 +145,7 @@ def local(
             f"[dim]Reviewing {len(request.reviewable)} file(s) · mode={mode} · "
             f"{PROVIDER}/{MODEL}[/dim]"
         )
-    result = run_review(
+    result = _run(
         request, mode=mode, verify=not no_verify, remember=not fresh,
         # A spinner reading "Reviewing…" for two minutes cannot tell a clean
         # review apart from one where every stage failed quietly. Off for JSON:
@@ -179,7 +194,7 @@ def pr(
 
     if talking:
         console.print(f"[dim]Reviewing {repo}#{number} · {len(request.reviewable)} file(s)[/dim]")
-    result = run_review(
+    result = _run(
         request, mode=mode, verify=not no_verify, run_name=f"{repo}#{number}",
         progress=console if talking else None,
     )

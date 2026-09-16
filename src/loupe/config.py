@@ -248,6 +248,34 @@ def key_env_var() -> str:
     return _KEY_ENV[PROVIDER]
 
 
+class MissingCredential(RuntimeError):
+    """No credential for the configured provider.
+
+    Its own exception, and raised before the graph is built rather than from
+    inside a reviewer node. A key that is absent is absent for all four of them,
+    so letting the fan-out happen turns one configuration mistake into four
+    identical provider errors per review — and in an eval run into a
+    corpus-length grind that ends with no measurement and a provider stack trace
+    where the reason should be.
+    """
+
+
+def require_credentials() -> None:
+    """Raise unless the configured provider can actually be called.
+
+    `credentials_present` answers the question; this is the one to call at an
+    entry point, so that every caller fails the same way instead of each
+    inventing its own check — which is how `run_review` ended up with none.
+    """
+    if credentials_present():
+        return
+    raise MissingCredential(
+        f"No {PROVIDER} credential. Set {key_env_var()} in the reviewer's .env "
+        "(copy .env.example) or export it in your shell. Switch providers with "
+        "LOUPE_PROVIDER=google|anthropic|local."
+    )
+
+
 # Burst allowance. The fan-out is genuinely concurrent, so a bucket of 1 turns
 # four parallel reviewers into four serial ones spaced 60/RPM apart — the average
 # rate is respected either way, but the latency is four times worse for nothing.
